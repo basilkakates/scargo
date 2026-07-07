@@ -23,8 +23,7 @@ scargo/
 ├── compose.yaml        # Local TimescaleDB/PostgreSQL service
 ├── docs/
 │   ├── privacy-model.md # Privacy, ownership, comparison, and cost scaling model
-│   ├── metric-policy.md # Metric categories, privacy, rollup/public policy
-│   └── dropbox-ingest.md # Dropbox app setup, folder layout, and ops checks
+│   └── metric-policy.md # Metric categories, privacy, rollup/public policy
 ├── dashboard/
 │   └── static/
 │       ├── auth.html  # Dedicated login/create-account page for dashboard entry
@@ -35,11 +34,10 @@ scargo/
 │       └── vehicles.js   # Vehicle-management page logic
 ├── src/
 │   ├── main.rs         # Entry point: init tracing, config, pool, migrate, start server
-│   ├── dropbox_worker.rs # Background Dropbox list/download/ingest worker
 │   ├── config/
 │   │   ├── mod.rs      # Re-exports Settings, Error, Result
 │   │   ├── error.rs    # Error enum (Internal, NotFound, BadRequest, Unauthorized, Database, CsvParse)
-│   │   └── settings.rs # Settings struct (http host/port, database_url, optional Dropbox config)
+│   │   └── settings.rs # Settings struct (http host/port, database_url)
 │   ├── db/
 │   │   ├── mod.rs      # Database struct wrapping deadpool_postgres::Pool
 │   │   └── migrate.rs  # Idempotent DDL: schema, hypertable, indexes, triggers
@@ -52,7 +50,6 @@ scargo/
 │   └── api/
 │       ├── mod.rs      # Declares submodules: auth, channels, ingest, latest, privacy, routes, summary, trends, vehicles
 │       ├── auth.rs     # POST/GET /api/auth/* login, session, and upload token routes
-│       ├── dropbox.rs  # Dropbox OAuth, encrypted token storage, and per-account connection status routes
 │       ├── routes.rs   # configure() — wires /api routes
 │       ├── channels.rs # GET  /api/channels — dashboard channel registry
 │       ├── cohort.rs   # GET  /api/analysis/cohort/{channel} — aggregate comparisons
@@ -65,6 +62,7 @@ scargo/
 │       ├── privacy.rs  # Account/session/token resolution and ownership checks
 │       └── vehicles.rs # GET  /api/vehicles — list account-owned vehicles
 ├── todo/
+│   ├── shared-link-ingest/ # Planned headless shared-link ingest replacement
 │   └── completed/      # Completed plan folders after review and merge
 ├── scripts/
 │   ├── analyze-telemetry.py # One-time trend/relationship report (daily by default, raw opt-in)
@@ -106,25 +104,12 @@ and `POSTGRES_DB` when `SCARGO_DATABASE_URL` is unset. `SCARGO_ENV=production`
 requires an explicit `SCARGO_DATABASE_URL`.
 Local database connections use plain PostgreSQL on localhost or the Compose
 network. Add TLS only when a production database requires it.
-Dropbox support is disabled unless `SCARGO_DROPBOX_ENABLED=true`. When enabled,
-require `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `SCARGO_BASE_URL`, and
-`SCARGO_TOKEN_ENCRYPTION_KEY`; the encryption key must decode to 32 bytes as
-hex or base64. Each signed-in account chooses its Dropbox ingest root, with
-`/OBD Fusion/CsvLogs` as the default example. Enabled deployments start a
-background worker that polls active account connections every
-`SCARGO_DROPBOX_POLL_SEC`, treats each direct child folder under that selected
-root as the VIN or vehicle key, and ingests only `<root>/<VIN>/*.csv`. CSV files
-directly under the root are skipped with a visible status error because no VIN
-folder exists.
-Signed-in dashboard users can choose the root folder, connect Dropbox, pause or
-resume polling, run a manual sync pass, disconnect, and view
-folder/status/count/error metadata from the dashboard. Guest users cannot manage
-Dropbox connections. The Dropbox OAuth
-redirect URI is `${SCARGO_BASE_URL}/api/dropbox/oauth/callback`; the worker uses
-offline token access, persists cursors and per-file state in the database, skips
-root-level and nested CSV files, and never moves or archives remote files in v1.
-Deployments with Dropbox enabled need persistent database storage and backups for
-encrypted tokens, selected paths, cursors, and file de-duplication state.
+Dropbox OAuth ingest was removed because OBD Fusion writes to its own Dropbox
+app folder and Scargo app-folder OAuth cannot read that folder without Full
+Dropbox access. The replacement direction is planned in
+`todo/shared-link-ingest/PLAN.md`: one encrypted Dropbox shared folder link per
+Scargo account, with server-side polling and NHTSA VIN cache support for exact
+17-character VIN folder names.
 
 ### Build & run
 ```bash
@@ -159,9 +144,6 @@ Core tables:
 | `account` (table) | User account registry: username, display name, password hash, guest flag |
 | `account_session` (table) | Hashed dashboard session cookies with expiry |
 | `account_api_token` (table) | Hashed upload API tokens for scripts and direct ingest |
-| `dropbox_connection` (table) | One Dropbox OAuth connection per account, with encrypted token material, selected root path, and worker status |
-| `dropbox_oauth_state` (table) | Short-lived hashed OAuth state rows bound to account id, safe redirect path, and pending root path |
-| `dropbox_ingest_file` (table) | Dropbox file sync ledger for per-connection ingest status and duplicate tracking |
 | `ingest_upload` (table) | Vehicle+content hash de-duplication plus approval timestamps for public exact-VIN and cohort sharing |
 | `account_vehicle_profile` (table) | Per-account default sharing preference for a vehicle's exact-VIN public stats |
 | `account_vehicle_upload` (table) | Per-account link to uploads, including private-access state and exact-VIN sharing flag |
@@ -198,13 +180,6 @@ time indexes.
 | POST | `/api/auth/logout` | Clear current session |
 | GET | `/api/auth/me` | Current account or dev/test guest fallback, plus `capabilities.approve_pending_public_stats` |
 | POST | `/api/auth/tokens` | Create an upload API token for the logged-in account |
-| POST | `/api/dropbox/oauth/start` | Create a Dropbox OAuth authorize URL for the signed-in non-guest account |
-| GET | `/api/dropbox/oauth/callback` | Validate OAuth state, store encrypted Dropbox tokens, and redirect safely back into the app |
-| GET | `/api/dropbox/connection` | Read account-owned Dropbox connection status, or `enabled=false` when Dropbox support is off |
-| POST | `/api/dropbox/connection/folder` | Update the signed-in account's selected Dropbox root folder |
-| POST | `/api/dropbox/connection/pause` | Pause or resume Dropbox polling for the signed-in non-guest account |
-| POST | `/api/dropbox/connection/sync-now` | Run one Dropbox sync pass for the signed-in non-guest account |
-| DELETE | `/api/dropbox/connection` | Remove the signed-in non-guest account's Dropbox connection and token data |
 | POST | `/api/ingest/csv?vin=VIN` | Upload live OBD CSV export body → `{"rows_ingested": N}` or `400` on metric value-kind conflict |
 | GET | `/api/analysis/dashboard` | Batched dashboard series. Query: `?view=summary`, `?limit=N`, `?channel_limit=N`, `?vehicle_id=UUID`, `?start=...`, `?end=...`, `?bucket=1d|1w|1mon`, `?channels=key1,key2` |
 | GET | `/api/analysis/pairs` | Owner-scoped exact-time numeric metric pairs. Query: `?x=key1&y=key2`, optional `vehicle_id`, `start`, `end`, `limit` |
@@ -225,10 +200,9 @@ sharing is always on for accepted uploads but becomes public only after
 `approved_cohort_at` approval. Exact-VIN public stats additionally require both
 approval and a per-account enabled sharing flag. See `docs/privacy-model.md`.
 Vehicle listings also include pending approval counts for those two public
-sharing paths. In dev/test mode, signed-in non-guest sessions can manually approve
-only their own still-private linked uploads; guests and production mode cannot
-use those approval routes. Dropbox OAuth routes also require a signed-in non-guest
-session; guest fallback and upload bearer tokens cannot manage Dropbox connections.
+sharing paths. In dev/test mode, signed-in non-guest sessions can manually
+approve only their own still-private linked uploads; guests and production mode
+cannot use those approval routes.
 
 ## CSV format
 
@@ -454,12 +428,6 @@ reason to roll them up or expose aggregate cohorts.
 | `SCARGO_HTTP_HOST` | `127.0.0.1` | Bind address |
 | `SCARGO_HTTP_PORT` | `8080` | Bind port |
 | `SCARGO_ENABLE_GUEST` | dev/test enabled, production disabled | Enable or disable unauthenticated guest fallback |
-| `SCARGO_DROPBOX_ENABLED` | `false` | Enable Dropbox OAuth + per-account connection routes |
-| `DROPBOX_APP_KEY` | unset | Required only when Dropbox support is enabled |
-| `DROPBOX_APP_SECRET` | unset | Required only when Dropbox support is enabled |
-| `SCARGO_BASE_URL` | unset | Required only when Dropbox support is enabled; callback base URL |
-| `SCARGO_TOKEN_ENCRYPTION_KEY` | unset | Required only when Dropbox support is enabled; 32-byte hex or base64 key |
-| `SCARGO_DROPBOX_POLL_SEC` | `300` | Dropbox worker poll interval for enabled deployments |
 | `SCARGO_API_TOKEN` | unset | Upload token for watcher and direct bulk ingest |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
 | `POSTGRES_PORT` | `5432` | Dev-mode local database port when URL is unset |

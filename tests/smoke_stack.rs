@@ -1,17 +1,11 @@
-use aes_gcm_siv::aead::{Aead, KeyInit};
-use aes_gcm_siv::{Aes256GcmSiv, Nonce};
-use scargo::config::DropboxConfig;
-use scargo::dropbox_worker::{DropboxApi, DropboxEntry, FileEntry, ListResult};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_postgres::{Config, NoTls};
-use uuid::Uuid;
 
 const HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_DB_PORT: &str = "5432";
@@ -109,92 +103,6 @@ Time (sec),Engine RPM (RPM),Vehicle speed (MPH)
         &http_get("/api/analysis/summary/engine_rpm?bucket=1d&limit=10", ""),
         "\"count\":2",
     );
-}
-
-#[test]
-#[ignore = "requires a running Postgres/TimescaleDB service"]
-fn smoke_dropbox_worker_fake_ingests_once() {
-    let _guard = smoke_lock().lock().expect("smoke lock");
-    let _ = dotenvy::from_filename(".env");
-    let _ = dotenvy::from_filename(".env.smoke");
-    let db = SmokeDatabase::create("dropbox");
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    rt.block_on(async {
-        let app_db = scargo::db::Database::connect(&database_url(db.name()))
-            .await
-            .expect("connect smoke db");
-        scargo::db::migrate::run(&app_db).await.expect("migrate");
-
-        let account_id = Uuid::new_v4();
-        let connection_id = Uuid::new_v4();
-        let key = [9u8; 32];
-        let client = app_db.get().await.expect("client");
-        client
-            .execute(
-                "INSERT INTO account (id, username, label, display_name)
-                 VALUES ($1, 'dropbox-smoke', 'dropbox-smoke', 'dropbox-smoke')",
-                &[&account_id],
-            )
-            .await
-            .expect("account");
-        client
-            .execute(
-                "INSERT INTO dropbox_connection
-                    (id, account_id, dropbox_account_id, root_path, encrypted_refresh_token)
-                 VALUES ($1, $2, 'dbx-smoke', '/OBD Fusion/CsvLogs', $3)",
-                &[&connection_id, &account_id, &encrypt_for_test(&key, "refresh")],
-            )
-            .await
-            .expect("connection");
-        drop(client);
-
-        let cfg = DropboxConfig {
-            app_key: "app".into(),
-            app_secret: "secret".into(),
-            base_url: "http://localhost:18080".into(),
-            token_encryption_key: key,
-            poll_sec: 1,
-            root_path: "/OBD Fusion/CsvLogs",
-        };
-        let fake = FakeDropbox::new(
-            DropboxEntry::File(FileEntry {
-                id: Some("id:file".into()),
-                path_lower: "/obd fusion/csvlogs/1hgcm82633a004352/trip.csv".into(),
-                rev: "rev1".into(),
-                content_hash: Some("dropbox-hash".into()),
-            }),
-            b"# StartTime = 03/27/2026 06:54:01.3973 PM\nTime (sec),Engine RPM (RPM),Vehicle speed (MPH)\n0.0,800,0\n1.0,900,10\n".to_vec(),
-        );
-
-        scargo::dropbox_worker::sync_once(&app_db, &cfg, &fake)
-            .await
-            .expect("first sync");
-        scargo::dropbox_worker::sync_once(&app_db, &cfg, &fake)
-            .await
-            .expect("second sync");
-
-        let client = app_db.get().await.expect("client");
-        let row = client
-            .query_one(
-                "SELECT COUNT(*)::BIGINT FROM obd2_metric_reading",
-                &[],
-            )
-            .await
-            .expect("reading count");
-        assert_eq!(row.get::<_, i64>(0), 4);
-        let row = client
-            .query_one(
-                "SELECT COUNT(*)::BIGINT, COALESCE(SUM(rows_ingested), 0)::BIGINT
-                 FROM dropbox_ingest_file
-                 WHERE connection_id = $1 AND status = 'ingested'",
-                &[&connection_id],
-            )
-            .await
-            .expect("file state");
-        assert_eq!(row.get::<_, i64>(0), 1);
-        assert_eq!(row.get::<_, i64>(1), 4);
-        assert_eq!(*fake.downloads.lock().expect("downloads"), 1);
-    });
 }
 
 struct App {
@@ -312,16 +220,6 @@ fn pg_config(database: String) -> Config {
         config.password(password);
     }
     config
-}
-
-fn database_url(database: &str) -> String {
-    let host = env_or("POSTGRES_HOST", "127.0.0.1");
-    let port = env_or("POSTGRES_PORT", DEFAULT_DB_PORT);
-    let user = env_or("POSTGRES_USER", "scargo");
-    let auth = std::env::var("POSTGRES_PASSWORD")
-        .map(|password| format!(":{password}"))
-        .unwrap_or_default();
-    format!("postgres://{user}{auth}@{host}:{port}/{database}")
 }
 
 fn admin_database() -> String {
@@ -476,85 +374,4 @@ impl Drop for TempDropRoot {
 
 fn smoke_lock() -> &'static Mutex<()> {
     SMOKE_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct FakeDropbox {
-    entry: DropboxEntry,
-    body: Vec<u8>,
-    downloads: Arc<Mutex<usize>>,
-}
-
-impl FakeDropbox {
-    fn new(entry: DropboxEntry, body: Vec<u8>) -> Self {
-        Self {
-            entry,
-            body,
-            downloads: Arc::new(Mutex::new(0)),
-        }
-    }
-}
-
-impl DropboxApi for FakeDropbox {
-    fn refresh_access_token<'a>(
-        &'a self,
-        _cfg: &'a DropboxConfig,
-        _refresh_token: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<String, scargo::Error>> + Send + 'a>> {
-        Box::pin(async { Ok("access".into()) })
-    }
-
-    fn list_folder<'a>(
-        &'a self,
-        _access_token: &'a str,
-        _root_path: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ListResult, scargo::Error>> + Send + 'a>>
-    {
-        Box::pin(async {
-            Ok(ListResult {
-                entries: vec![self.entry.clone()],
-                cursor: "cursor-1".into(),
-                has_more: false,
-            })
-        })
-    }
-
-    fn list_folder_continue<'a>(
-        &'a self,
-        _access_token: &'a str,
-        _cursor: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ListResult, scargo::Error>> + Send + 'a>>
-    {
-        Box::pin(async {
-            Ok(ListResult {
-                entries: vec![self.entry.clone()],
-                cursor: "cursor-2".into(),
-                has_more: false,
-            })
-        })
-    }
-
-    fn download<'a>(
-        &'a self,
-        _access_token: &'a str,
-        _path_lower: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, scargo::Error>> + Send + 'a>>
-    {
-        Box::pin(async {
-            *self.downloads.lock().expect("downloads") += 1;
-            Ok(self.body.clone())
-        })
-    }
-}
-
-fn encrypt_for_test(key: &[u8; 32], plaintext: &str) -> Vec<u8> {
-    let cipher = Aes256GcmSiv::new_from_slice(key).expect("cipher");
-    let nonce_bytes = [7u8; 12];
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let mut out = nonce_bytes.to_vec();
-    out.extend_from_slice(
-        &cipher
-            .encrypt(nonce, plaintext.as_bytes())
-            .expect("encrypt"),
-    );
-    out
 }

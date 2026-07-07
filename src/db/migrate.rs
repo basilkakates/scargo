@@ -9,9 +9,6 @@ const RESET_DDL: &[&str] = &[
     "DROP MATERIALIZED VIEW IF EXISTS obd2_metric_hourly;",
     "DROP TABLE IF EXISTS vehicle_metric_day;",
     "DROP TABLE IF EXISTS obd2_metric_reading;",
-    "DROP TABLE IF EXISTS dropbox_ingest_file;",
-    "DROP TABLE IF EXISTS dropbox_oauth_state;",
-    "DROP TABLE IF EXISTS dropbox_connection;",
     "DROP TABLE IF EXISTS account_vehicle_upload;",
     "DROP TABLE IF EXISTS account_vehicle_profile;",
     "DROP TABLE IF EXISTS ingest_upload;",
@@ -59,31 +56,6 @@ const CORE_DDL: &[&str] = &[
         last_used_at TIMESTAMPTZ,
         revoked_at   TIMESTAMPTZ
     );",
-    "CREATE TABLE IF NOT EXISTS dropbox_connection (
-        id                         UUID PRIMARY KEY,
-        account_id                 UUID NOT NULL UNIQUE REFERENCES account(id) ON DELETE CASCADE,
-        dropbox_account_id         TEXT NOT NULL,
-        root_path                  TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs',
-        encrypted_refresh_token    BYTEA NOT NULL,
-        encrypted_access_token     BYTEA,
-        access_token_expires_at    TIMESTAMPTZ,
-        cursor                     TEXT,
-        status                     TEXT NOT NULL DEFAULT 'active',
-        last_sync_at               TIMESTAMPTZ,
-        last_success_at            TIMESTAMPTZ,
-        latest_error               TEXT,
-        created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (status IN ('active', 'paused', 'error'))
-    );",
-    "CREATE TABLE IF NOT EXISTS dropbox_oauth_state (
-        state_hash    TEXT PRIMARY KEY,
-        account_id    UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-        redirect_path TEXT NOT NULL,
-        root_path     TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs',
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at    TIMESTAMPTZ NOT NULL
-    );",
     "CREATE TABLE IF NOT EXISTS ingest_upload (
         id            UUID PRIMARY KEY,
         vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
@@ -96,24 +68,6 @@ const CORE_DDL: &[&str] = &[
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         completed_at  TIMESTAMPTZ,
         UNIQUE (vehicle_id, content_hash)
-    );",
-    "CREATE TABLE IF NOT EXISTS dropbox_ingest_file (
-        id              UUID PRIMARY KEY,
-        connection_id   UUID NOT NULL REFERENCES dropbox_connection(id) ON DELETE CASCADE,
-        account_id      UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-        dropbox_file_id TEXT,
-        path_lower      TEXT NOT NULL,
-        rev             TEXT,
-        content_hash    TEXT,
-        vin             TEXT,
-        upload_id       UUID REFERENCES ingest_upload(id) ON DELETE SET NULL,
-        status          TEXT NOT NULL DEFAULT 'pending',
-        rows_ingested   BIGINT NOT NULL DEFAULT 0,
-        duplicate       BOOLEAN NOT NULL DEFAULT FALSE,
-        latest_error    TEXT,
-        seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        ingested_at     TIMESTAMPTZ,
-        CHECK (status IN ('pending', 'ingested', 'duplicate', 'skipped', 'deleted', 'error'))
     );",
     "CREATE TABLE IF NOT EXISTS account_vehicle_profile (
         account_id    UUID NOT NULL REFERENCES account(id),
@@ -207,14 +161,6 @@ const RUNTIME_DDL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_account_api_token_account
         ON account_api_token (account_id, created_at DESC)
         WHERE revoked_at IS NULL;",
-    "CREATE INDEX IF NOT EXISTS idx_dropbox_connection_status
-        ON dropbox_connection (status, updated_at DESC);",
-    "CREATE INDEX IF NOT EXISTS idx_dropbox_oauth_state_account_expires
-        ON dropbox_oauth_state (account_id, expires_at DESC);",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_dropbox_ingest_file_conn_path_rev
-        ON dropbox_ingest_file (connection_id, path_lower, COALESCE(rev, ''));",
-    "CREATE INDEX IF NOT EXISTS idx_dropbox_ingest_file_conn_file
-        ON dropbox_ingest_file (connection_id, dropbox_file_id);",
     "ALTER TABLE obd2_metric_reading SET (
         timescaledb.compress,
         timescaledb.compress_segmentby = 'vehicle_id, metric_id',
@@ -245,9 +191,6 @@ const ANALYZE_SQL: &[&str] = &[
     "ANALYZE account;",
     "ANALYZE account_session;",
     "ANALYZE account_api_token;",
-    "ANALYZE dropbox_connection;",
-    "ANALYZE dropbox_oauth_state;",
-    "ANALYZE dropbox_ingest_file;",
     "ANALYZE ingest_upload;",
     "ANALYZE account_vehicle_profile;",
     "ANALYZE account_vehicle_upload;",
@@ -349,14 +292,12 @@ mod tests {
     }
 
     #[test]
-    fn dropbox_tables_are_bootstrapped() {
+    fn account_tables_are_bootstrapped() {
         let ddl = super::CORE_DDL.join("\n");
         let runtime = super::RUNTIME_DDL.join("\n");
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_connection"));
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_oauth_state"));
-        assert!(ddl.contains("root_path     TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs'"));
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_ingest_file"));
-        assert!(runtime.contains("idx_dropbox_connection_status"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS account"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS account_api_token"));
+        assert!(runtime.contains("idx_account_api_token_account"));
     }
 
     #[test]

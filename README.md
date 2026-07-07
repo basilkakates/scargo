@@ -79,18 +79,10 @@ Production must run with `SCARGO_ENV=production` and an explicit
 `SCARGO_DATABASE_URL` supplied by the environment or ignored `.env`. Runtime
 config is environment-only: use `SCARGO_*` for app settings and `POSTGRES_*`
 for the dev database fallback. See `.env.example` for placeholder settings.
-Dropbox ingest is off by default. Enable it only when
-`SCARGO_DROPBOX_ENABLED=true` and all of `DROPBOX_APP_KEY`,
-`DROPBOX_APP_SECRET`, `SCARGO_BASE_URL`, and `SCARGO_TOKEN_ENCRYPTION_KEY` are
-set. The encryption key must decode to 32 bytes as hex or base64. Scargo stores
-one Dropbox connection and selected ingest folder per signed-in account, with
-`/OBD Fusion/CsvLogs` as the default example. When enabled, Scargo starts a
-background worker that polls active connections, treats each direct child folder
-under the selected root as the VIN or vehicle key, and ingests only
-`<root>/<VIN>/*.csv` files for that account. Root-level CSV files are skipped
-and recorded in connection/file status because they do not identify a vehicle.
-See [docs/dropbox-ingest.md](docs/dropbox-ingest.md) for Dropbox app setup,
-redirect URI, folder layout, smoke checks, and deployment notes.
+Dropbox OAuth ingest was removed because OBD Fusion writes to its own Dropbox
+app folder and Scargo app-folder OAuth cannot read another app's folder without
+Full Dropbox access. Shared-link ingest is planned in
+`todo/shared-link-ingest/PLAN.md`.
 
 ## Features
 
@@ -139,13 +131,6 @@ scoped to the authenticated account.
 | POST | `/api/auth/logout` | Clear the current session cookie |
 | GET | `/api/auth/me` | Current account, or guest in dev/test fallback mode, plus `capabilities.approve_pending_public_stats` |
 | POST | `/api/auth/tokens` | Create a new upload token for the logged-in account |
-| POST | `/api/dropbox/oauth/start` | Create a Dropbox OAuth authorize URL for the signed-in non-guest account, optionally with `root_path` |
-| GET | `/api/dropbox/oauth/callback` | Validate OAuth state, store encrypted Dropbox tokens, and redirect back into the app |
-| GET | `/api/dropbox/connection` | Read Dropbox connection status for the signed-in non-guest account, or `enabled=false` when support is off |
-| POST | `/api/dropbox/connection/folder` | Update the signed-in account's selected Dropbox root folder |
-| POST | `/api/dropbox/connection/pause` | Pause or resume Dropbox polling for the signed-in non-guest account |
-| POST | `/api/dropbox/connection/sync-now` | Run one Dropbox sync pass for the signed-in non-guest account |
-| DELETE | `/api/dropbox/connection` | Remove the signed-in non-guest account's Dropbox connection and stored tokens |
 | GET | `/api/channels` | Channel registry used by the dashboard, including display-unit and metric-policy metadata |
 | GET | `/api/vehicles` | Account-linked vehicles with owner-visible metadata, reading counts, upload counts, sharing state, and pending approval counts |
 | POST | `/api/vehicles/{vehicle_id}/exact-vin-sharing` | Enable or disable this account's exact-VIN public sharing preference |
@@ -208,16 +193,6 @@ key. Examples:
 
 The dashboard uses `/api/channels` metadata to let users pick display units per
 metric on the front end without changing the stored series or analysis routes.
-Signed-in non-guest users can also manage Dropbox ingest from the dashboard:
-choose the root folder, connect OAuth, pause or resume polling, run one sync
-pass, disconnect, and view the selected ingest folder plus last sync, success,
-ingest, duplicate, and latest error status. Guest users do not see Dropbox
-controls.
-Dropbox OAuth uses the redirect URI
-`${SCARGO_BASE_URL}/api/dropbox/oauth/callback`, requests offline token access,
-and stores encrypted token material, cursors, and per-file sync state in the
-database. Keep that database storage persistent and backed up in any deployment
-with Dropbox enabled.
 It also returns each metric's `category`, `sensitivity`, `rollup`,
 `public_cohort`, and `derived_preferred` policy fields. New ingest writes raw
 metrics and incrementally maintains a durable `vehicle_metric_day` rollup only
@@ -347,12 +322,6 @@ For direct DB bulk loads, `--api-token TOKEN` resolves the account before
 loading. A destructive `--rebuild-db` drops token rows, so local rebuild smoke
 flows use the guest account unless a follow-up account/token is created.
 
-Dropbox ingest follows the same parser and duplicate protections without using
-the local watcher. It lists the signed-in account's selected Dropbox root,
-treats each direct child folder as the VIN or vehicle key, ingests only direct
-CSV children, skips root-level and nested CSV files with visible status, and
-leaves Dropbox files in place.
-
 TimescaleDB stores raw metric readings in a hypertable. Compression policy and
 an hourly continuous aggregate are configured during runtime bootstrap and after
 bulk-load finalization.
@@ -392,10 +361,9 @@ Scargo separates upload-linked private access from stable vehicle identity. VIN
 is stored internally for ingest and de-duplication, but `/api/vehicles` returns
 only the owner-visible vehicle UUID handle and non-sensitive metadata. Raw
 telemetry APIs return data only for uploads still linked to the request account.
-Dropbox OAuth routes require a real signed-in account and reject guest fallback.
-Users can manage that link on `/vehicles.html`, including dropping a vehicle
-from their account. In dev/test signed-in sessions, the same page can also
-approve the account's still-pending exact-VIN or cohort uploads when manual
+Users can manage vehicle access on `/vehicles.html`, including dropping a
+vehicle from their account. In dev/test signed-in sessions, the same page can
+also approve the account's still-pending exact-VIN or cohort uploads when manual
 approval is enabled. Exact-VIN public stats are optional per account and remain
 approval-gated. Year/make/model/engine-family cohort sharing is always on for
 accepted uploads, but public cohort reads require approval and metric-policy
