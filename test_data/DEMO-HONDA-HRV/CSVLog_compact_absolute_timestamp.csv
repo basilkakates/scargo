@@ -1,0 +1,3 @@
+timestamp,rpm,speed,GPS Speed (km/h),Boost (psi),Fuel rate (l/hr),Distance to empty (km),Altitude (ft),Fuel Status
+2026-04-13T21:45:11Z,725,12,14,2.5,7.570823,72.42048,328.084,Closed loop
+2026-04-13T21:45:23Z,810,20,22,3.0,3.7854115,40.2336,492.126,Open loop

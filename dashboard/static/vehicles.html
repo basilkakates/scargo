@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scargo - Vehicles</title>
+<link rel="icon" type="image/png" sizes="512x512" href="/favicon.png">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07111d;
+    --sidebar: #081522;
+    --panel: #0c1724;
+    --panel-2: #101c2b;
+    --panel-3: #162231;
+    --input: #07111d;
+    --text: #f7f9fc;
+    --muted: #95a3b6;
+    --soft: #d5dbe6;
+    --line: #243449;
+    --line-2: #31425a;
+    --purple: #9b6cff;
+    --purple-2: #6f4fe6;
+    --green: #66df7c;
+    --yellow: #ffcb45;
+    --red: #ff625d;
+    --blue: #4fc3ff;
+    --shadow: rgba(0, 0, 0, 0.34);
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f7fb;
+    --sidebar: #ffffff;
+    --panel: #ffffff;
+    --panel-2: #f0f3f8;
+    --panel-3: #e8edf5;
+    --input: #ffffff;
+    --text: #152033;
+    --muted: #5f6f83;
+    --soft: #26364c;
+    --line: #d7dfeb;
+    --line-2: #c3cedd;
+    --purple: #6f4fe6;
+    --purple-2: #7657e8;
+    --green: #198a35;
+    --yellow: #9f6a00;
+    --red: #c8322e;
+    --blue: #006fa8;
+    --shadow: rgba(34, 48, 72, 0.12);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  button, input { font: inherit; }
+  button { cursor: pointer; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 276px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  .sidebar {
+    border-right: 1px solid var(--line);
+    background: var(--sidebar);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .brand {
+    display: grid;
+    padding: 0.25rem 0 0.9rem;
+  }
+
+  .brand img {
+    width: min(238px, 100%);
+    height: auto;
+    display: block;
+    border-radius: 8px;
+  }
+
+
+  .nav-list {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .nav-item {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--soft);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 46px;
+    padding: 0.55rem 0.7rem;
+    text-decoration: none;
+  }
+
+  .nav-item.active {
+    background: var(--purple-2);
+    border-color: #7f62e8;
+    color: #fff;
+    box-shadow: 0 8px 20px rgba(111, 79, 230, 0.24);
+  }
+
+  .nav-icon {
+    width: 22px;
+    height: 22px;
+    border: 2px solid currentColor;
+    border-radius: 6px;
+    display: inline-block;
+    flex: 0 0 auto;
+  }
+
+  .nav-icon.circle { border-radius: 50%; }
+  .nav-icon.line { border-width: 0 0 2px 0; border-radius: 0; }
+
+  .sidebar-spacer { flex: 1; }
+
+  .profile-card,
+  .hint-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 0.85rem;
+    box-shadow: 0 12px 26px var(--shadow);
+  }
+
+  .profile-card { display: grid; gap: 0.25rem; }
+  .hint-card { display: grid; gap: 0.45rem; }
+
+  .profile-label,
+  .eyebrow,
+  .card-label,
+  .pill-label {
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 800;
+  }
+
+  .profile-value {
+    color: var(--text);
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .content {
+    min-width: 0;
+    padding: 1.45rem 1.6rem 1.6rem;
+  }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  h1 {
+    font-size: clamp(1.7rem, 3vw, 2.25rem);
+    line-height: 1.1;
+    margin-top: 0.25rem;
+  }
+
+  .subhead {
+    color: var(--muted);
+    margin-top: 0.35rem;
+    font-size: 0.98rem;
+    max-width: 44rem;
+  }
+
+  .top-actions,
+  .account-actions,
+  .vehicle-actions,
+  .vehicle-toggle {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .ghost-button,
+  .primary-button,
+  .danger-button {
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    min-height: 38px;
+    padding: 0.48rem 0.75rem;
+    color: var(--text);
+    background: var(--panel-2);
+    font-weight: 700;
+  }
+
+  a.ghost-button {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+  }
+
+  .primary-button {
+    background: var(--purple-2);
+    border-color: #8267e9;
+  }
+
+  .danger-button {
+    background: rgba(255, 98, 93, 0.14);
+    border-color: rgba(255, 98, 93, 0.38);
+    color: var(--red);
+  }
+
+  button[disabled] {
+    cursor: default;
+    opacity: 0.58;
+  }
+
+  .account-card,
+  .intro-card,
+  .vehicle-card,
+  .empty-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px var(--shadow);
+  }
+
+  .account-card,
+  .intro-card,
+  .empty-card {
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .account-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .account-meta {
+    display: grid;
+    gap: 0.22rem;
+  }
+
+  .intro-card {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .intro-panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 0.9rem;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .intro-panel strong {
+    font-size: 1.05rem;
+  }
+
+  .intro-panel p,
+  .account-note,
+  .hint-copy,
+  .vehicle-copy,
+  .vehicle-note,
+  .empty-card,
+  #account-status,
+  #page-status {
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  #account-status.err,
+  #page-status.err {
+    color: var(--red);
+  }
+
+  #account-status.ok,
+  #page-status.ok {
+    color: var(--green);
+  }
+
+  .vehicle-grid {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .vehicle-card {
+    padding: 1rem;
+    display: grid;
+    gap: 1rem;
+  }
+
+  .vehicle-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: start;
+    flex-wrap: wrap;
+  }
+
+  .vehicle-title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  .vehicle-copy {
+    margin-top: 0.25rem;
+  }
+
+  .approval-actions {
+    display: grid;
+    gap: 0.35rem;
+    min-width: min(100%, 28rem);
+  }
+
+  .approval-copy {
+    color: var(--muted);
+    line-height: 1.45;
+    font-size: 0.92rem;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .stat {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 0.8rem;
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .stat-value {
+    font-size: 1.2rem;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+
+  .share-row {
+    border-top: 1px solid var(--line);
+    padding-top: 1rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: start;
+    flex-wrap: wrap;
+  }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .toggle input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--purple-2);
+  }
+
+  .pill-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.32rem 0.62rem;
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+
+  .pill.pending {
+    background: rgba(255, 203, 69, 0.12);
+    color: var(--yellow);
+  }
+
+  .pill.public {
+    background: rgba(102, 223, 124, 0.13);
+    color: var(--green);
+  }
+
+  .pill.private {
+    background: rgba(79, 195, 255, 0.12);
+    color: var(--blue);
+  }
+
+  .empty-card {
+    text-align: center;
+  }
+
+  @media (max-width: 1100px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar {
+      position: static;
+      display: grid;
+      grid-template-columns: minmax(160px, 230px) 1fr;
+      align-items: center;
+    }
+    .nav-list,
+    .sidebar-spacer,
+    .profile-card,
+    .hint-card { display: none; }
+    .intro-card,
+    .stats { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 720px) {
+    .content { padding: 1rem; }
+    .topbar,
+    .account-card,
+    .vehicle-head,
+    .share-row { display: grid; }
+    .top-actions { justify-content: start; }
+    .sidebar { grid-template-columns: 1fr; }
+    .brand img { width: 176px; }
+    .intro-card,
+    .stats { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="/static/assets/scargo-logo.png" alt="Scargo">
+    </div>
+    <nav class="nav-list" aria-label="Dashboard sections">
+      <a class="nav-item" href="/"><span class="nav-icon"></span><span>Dashboard</span></a>
+      <a class="nav-item active" href="/vehicles.html"><span class="nav-icon circle"></span><span>Vehicles</span></a>
+      <a class="nav-item" href="/"><span class="nav-icon line"></span><span>Trends</span></a>
+      <a class="nav-item" href="/"><span class="nav-icon circle"></span><span>Uploads</span></a>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="profile-card">
+      <div class="profile-label">Account</div>
+      <div class="profile-value" id="profile-user-key">Checking...</div>
+    </div>
+    <div class="hint-card">
+      <div class="profile-label">Rules</div>
+      <div class="hint-copy">Drop removes your private access. Already approved public stats stay public.</div>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="topbar">
+      <div>
+        <div class="eyebrow">Vehicle access</div>
+        <h1>Manage vehicles tied to your uploads.</h1>
+        <p class="subhead">Exact-VIN sharing is per-account and revocable. Year/make/model/engine-family cohort sharing stays on for accepted uploads, but neither path becomes public until approval clears the pending uploads tied to your account.</p>
+      </div>
+      <div class="top-actions">
+        <button class="ghost-button" type="button" id="theme-toggle">Light mode</button>
+        <a class="ghost-button" href="/">Back to dashboard</a>
+      </div>
+    </div>
+
+    <section class="account-card" aria-label="Account">
+      <div class="account-meta">
+        <div class="profile-label">Signed-in account</div>
+        <div id="account-status" role="status" aria-live="polite">Checking session...</div>
+        <div class="account-note">Guests cannot manage vehicle access or sharing.</div>
+      </div>
+      <div class="account-actions">
+        <button class="ghost-button" type="button" id="refresh-btn">Refresh</button>
+        <button class="ghost-button" type="button" id="logout-btn">Log out</button>
+      </div>
+    </section>
+
+    <section class="intro-card" aria-label="Sharing rules">
+      <article class="intro-panel">
+        <div class="card-label">Private access</div>
+        <strong>Your uploads only</strong>
+        <p>Raw telemetry follows upload links, not permanent vehicle ownership.</p>
+      </article>
+      <article class="intro-panel">
+        <div class="card-label">Exact VIN stats</div>
+        <strong>Optional</strong>
+        <p>Enable or disable your contribution before approval. Public exposure stays approval-gated, and pending uploads can be approved later in dev/test sessions.</p>
+      </article>
+      <article class="intro-panel">
+        <div class="card-label">Cohort stats</div>
+        <strong>Always on</strong>
+        <p>Accepted uploads can feed year/make/model/engine-family cohorts after review approval. Approval does not override metric-policy limits or missing metadata requirements.</p>
+      </article>
+    </section>
+
+    <div id="page-status" role="status" aria-live="polite"></div>
+    <section class="vehicle-grid" id="vehicle-grid" aria-label="Managed vehicles"></section>
+  </main>
+</div>
+<script src="/static/vehicles.js"></script>
+</body>
+</html>

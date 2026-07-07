@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scargo - Sign in</title>
+<link rel="icon" type="image/png" sizes="512x512" href="/favicon.png">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07111d;
+    --panel: #0c1724;
+    --panel-2: #101c2b;
+    --input: #07111d;
+    --text: #f7f9fc;
+    --muted: #95a3b6;
+    --line: #243449;
+    --line-2: #31425a;
+    --purple: #9b6cff;
+    --purple-2: #6f4fe6;
+    --green: #66df7c;
+    --red: #ff625d;
+    --shadow: rgba(0, 0, 0, 0.34);
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --panel-2: #f0f3f8;
+    --input: #ffffff;
+    --text: #152033;
+    --muted: #5f6f83;
+    --line: #d7dfeb;
+    --line-2: #c3cedd;
+    --purple: #6f4fe6;
+    --purple-2: #7657e8;
+    --green: #198a35;
+    --red: #c8322e;
+    --shadow: rgba(34, 48, 72, 0.12);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at top, rgba(111, 79, 230, 0.18), transparent 34%),
+      linear-gradient(180deg, var(--bg) 0%, #050b13 100%);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  button, input { font: inherit; }
+  button { cursor: pointer; }
+
+  .page {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 430px);
+  }
+
+  .hero,
+  .panel {
+    padding: 2rem;
+  }
+
+  .hero {
+    display: grid;
+    align-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .brand img {
+    width: min(240px, 100%);
+    display: block;
+  }
+
+
+  .eyebrow {
+    color: var(--purple);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin-top: 0.45rem;
+    font-size: clamp(2rem, 5vw, 4.25rem);
+    line-height: 0.96;
+  }
+
+  .lead {
+    margin-top: 0.9rem;
+    max-width: 34rem;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .hero-card,
+  .panel-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(12, 23, 36, 0.78);
+    box-shadow: 0 16px 40px var(--shadow);
+  }
+
+  .hero-card {
+    padding: 1rem;
+  }
+
+  .hero-card .label,
+  .field label,
+  .helper-title {
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 800;
+  }
+
+  .hero-card .value {
+    margin-top: 0.45rem;
+    font-size: 1.15rem;
+    font-weight: 800;
+  }
+
+  .hero-card .note {
+    margin-top: 0.3rem;
+    color: var(--muted);
+    font-size: 0.84rem;
+  }
+
+  .panel {
+    background: rgba(8, 21, 34, 0.92);
+    border-left: 1px solid var(--line);
+    display: grid;
+    align-content: center;
+  }
+
+  .panel-card {
+    padding: 1.3rem;
+    display: grid;
+    gap: 1rem;
+    background: var(--panel);
+  }
+
+  .panel-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .panel-top h2 {
+    font-size: 1.4rem;
+  }
+
+  .ghost-button,
+  .primary-button,
+  .mode-toggle button,
+  .helper-card button {
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    min-height: 40px;
+    padding: 0.55rem 0.8rem;
+    color: var(--text);
+    background: var(--panel-2);
+    font-weight: 700;
+  }
+
+  .primary-button {
+    background: var(--purple-2);
+    border-color: #8267e9;
+  }
+
+  .ghost-button[disabled],
+  .primary-button[disabled] {
+    cursor: default;
+    opacity: 0.58;
+  }
+
+  .mode-toggle {
+    display: inline-flex;
+    gap: 0.25rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 0.22rem;
+  }
+
+  .mode-toggle button.active {
+    background: var(--purple-2);
+    border-color: #8267e9;
+  }
+
+  form {
+    display: grid;
+    gap: 0.85rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.32rem;
+  }
+
+  input {
+    width: 100%;
+    min-height: 42px;
+    background: var(--input);
+    color: var(--text);
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    padding: 0.55rem 0.7rem;
+  }
+
+  .helper-grid {
+    display: grid;
+    gap: 0.7rem;
+  }
+
+  .helper-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 0.95rem;
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .helper-copy,
+  .field-note,
+  #auth-status,
+  #guest-status {
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  #auth-status.ok,
+  #guest-status.ok {
+    color: var(--green);
+  }
+
+  #auth-status.err,
+  #guest-status.err {
+    color: var(--red);
+  }
+
+  .footnote {
+    color: var(--muted);
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 960px) {
+    .page { grid-template-columns: 1fr; }
+    .panel { border-left: 0; border-top: 1px solid var(--line); }
+    .hero-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <section class="hero">
+    <div class="brand">
+      <img src="/static/assets/scargo-logo.png" alt="Scargo">
+    </div>
+    <div>
+      <div class="eyebrow">OBD2 telemetry</div>
+      <h1>Start with the account gate, then enter the cockpit.</h1>
+      <p class="lead">
+        Sign in for owner-scoped telemetry, create an upload token when you need one,
+        or explicitly continue as guest in dev and test environments.
+      </p>
+    </div>
+    <div class="hero-grid" aria-label="Auth rules">
+      <div class="hero-card">
+        <div class="label">Username</div>
+        <div class="value">3-80 chars</div>
+        <div class="note">Lowercase letters, numbers, `.`, `_`, `-`, `@`.</div>
+      </div>
+      <div class="hero-card">
+        <div class="label">Password</div>
+        <div class="value">8+ chars</div>
+        <div class="note">Register uses the same backend validation as the API.</div>
+      </div>
+      <div class="hero-card">
+        <div class="label">Guest mode</div>
+        <div class="value">Explicit only</div>
+        <div class="note">Guest access stays off the dashboard until you choose it here.</div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="panel-card">
+      <div class="panel-top">
+        <div>
+          <div class="eyebrow">Account</div>
+          <h2 id="mode-title">Sign in</h2>
+        </div>
+        <button class="ghost-button" id="theme-toggle" type="button">Light mode</button>
+      </div>
+
+      <div class="mode-toggle" aria-label="Auth mode">
+        <button id="mode-login-btn" class="active" type="button">Log in</button>
+        <button id="mode-register-btn" type="button">Create account</button>
+      </div>
+
+      <form id="auth-form">
+        <div class="field">
+          <label for="auth-username">Username</label>
+          <input id="auth-username" name="username" type="text" autocomplete="username" required>
+          <div class="field-note">3-80 chars, lowercase safe set only.</div>
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" name="password" type="password" autocomplete="current-password" required>
+          <div class="field-note">Minimum 8 characters.</div>
+        </div>
+        <button class="primary-button" id="auth-submit" type="submit">Log in</button>
+        <div id="auth-status" role="status" aria-live="polite">Checking session...</div>
+      </form>
+
+      <div class="helper-grid">
+        <div class="helper-card">
+          <div class="helper-title">Guest fallback</div>
+          <div class="helper-copy">Available only when the backend still exposes the dev/test guest account.</div>
+          <button class="ghost-button" id="guest-btn" type="button" disabled>Continue as guest</button>
+          <div id="guest-status" role="status" aria-live="polite">Checking guest availability...</div>
+        </div>
+      </div>
+
+      <div class="footnote">
+        Account creation keeps the existing upload-token contract. The first token
+        is stored in browser session storage and shown once after redirect.
+      </div>
+    </div>
+  </aside>
+</div>
+<script src="/static/auth.js"></script>
+</body>
+</html>

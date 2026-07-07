@@ -1,0 +1,21 @@
+services:
+    scargo_db:
+        image: timescale/timescaledb:latest-pg17
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: ${POSTGRES_DB:-scargo}
+            POSTGRES_USER: ${POSTGRES_USER:-scargo}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in ignored .env}
+        volumes:
+            - data:/var/lib/postgresql/data
+        ports:
+            - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+        networks:
+            - network
+
+volumes:
+    data:
+
+networks:
+    network:
+        driver: bridge
