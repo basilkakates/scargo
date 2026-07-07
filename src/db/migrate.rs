@@ -83,6 +83,19 @@ const CORE_DDL: &[&str] = &[
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         expires_at    TIMESTAMPTZ NOT NULL
     );",
+    "CREATE TABLE IF NOT EXISTS ingest_upload (
+        id            UUID PRIMARY KEY,
+        vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
+        content_hash  TEXT NOT NULL,
+        content_type  TEXT NOT NULL DEFAULT '',
+        bytes         BIGINT NOT NULL DEFAULT 0,
+        rows_ingested BIGINT NOT NULL DEFAULT 0,
+        approved_exact_vin_at TIMESTAMPTZ,
+        approved_cohort_at TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at  TIMESTAMPTZ,
+        UNIQUE (vehicle_id, content_hash)
+    );",
     "CREATE TABLE IF NOT EXISTS dropbox_ingest_file (
         id              UUID PRIMARY KEY,
         connection_id   UUID NOT NULL REFERENCES dropbox_connection(id) ON DELETE CASCADE,
@@ -100,19 +113,6 @@ const CORE_DDL: &[&str] = &[
         seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         ingested_at     TIMESTAMPTZ,
         CHECK (status IN ('pending', 'ingested', 'duplicate', 'skipped', 'deleted', 'error'))
-    );",
-    "CREATE TABLE IF NOT EXISTS ingest_upload (
-        id            UUID PRIMARY KEY,
-        vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
-        content_hash  TEXT NOT NULL,
-        content_type  TEXT NOT NULL DEFAULT '',
-        bytes         BIGINT NOT NULL DEFAULT 0,
-        rows_ingested BIGINT NOT NULL DEFAULT 0,
-        approved_exact_vin_at TIMESTAMPTZ,
-        approved_cohort_at TIMESTAMPTZ,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        completed_at  TIMESTAMPTZ,
-        UNIQUE (vehicle_id, content_hash)
     );",
     "CREATE TABLE IF NOT EXISTS account_vehicle_profile (
         account_id    UUID NOT NULL REFERENCES account(id),

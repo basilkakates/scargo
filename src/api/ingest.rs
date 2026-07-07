@@ -2,16 +2,26 @@ use crate::db::Database;
 use crate::ingest::{model, vin};
 use crate::Error;
 use actix_web::{post, web, HttpRequest, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 #[derive(Deserialize)]
 struct IngestQuery {
     vin: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CsvIngestResult {
+    pub upload_id: Uuid,
+    pub rows_ingested: i64,
+    pub duplicate: bool,
+    pub vehicle_id: Uuid,
+    pub content_hash: String,
+}
+
 #[post("/ingest/csv")]
-async fn upload_csv(
+pub(crate) async fn upload_csv(
     db: web::Data<Database>,
     req: HttpRequest,
     query: web::Query<IngestQuery>,
@@ -22,17 +32,34 @@ async fn upload_csv(
         return Err(Error::BadRequest("missing ?vin=VIN query parameter".into()));
     }
 
-    let vehicle_id = model::vin_to_uuid(vin);
-    let metadata = vin::decode(vin);
-    let content_hash = packet_hash(&body);
     let content_type = req
         .headers()
         .get(actix_web::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    let bytes = body.len() as i64;
     let client = db.get().await?;
     let account_id = super::privacy::account_id(&client, &req).await?;
+    let result = ingest_csv_for_account(&db, account_id, vin, body.as_ref(), content_type).await?;
+    Ok(HttpResponse::Ok().json(result))
+}
+
+pub async fn ingest_csv_for_account(
+    db: &Database,
+    account_id: Uuid,
+    vin: &str,
+    body: &[u8],
+    content_type: &str,
+) -> Result<CsvIngestResult, Error> {
+    let vin = vin.trim();
+    if vin.is_empty() {
+        return Err(Error::BadRequest("missing vin".into()));
+    }
+
+    let vehicle_id = model::vin_to_uuid(vin);
+    let metadata = vin::decode(vin);
+    let content_hash = packet_hash(body);
+    let bytes = body.len() as i64;
+    let client = db.get().await?;
     client
         .execute(
             "INSERT INTO vehicle (id, vin, make, model, year)
@@ -62,7 +89,7 @@ async fn upload_csv(
         .await
         .map_err(|_| Error::Database)?;
 
-    let upload_id = uuid::Uuid::new_v4();
+    let upload_id = Uuid::new_v4();
     let upload = client
         .query_one(
             "WITH inserted AS (
@@ -92,13 +119,16 @@ async fn upload_csv(
     let inserted: bool = upload.get(1);
     super::privacy::link_upload_to_account(&client, account_id, upload_id, vehicle_id).await?;
     if !inserted {
-        return Ok(HttpResponse::Ok().json(serde_json::json!({
-            "rows_ingested": 0,
-            "duplicate": true,
-        })));
+        return Ok(CsvIngestResult {
+            upload_id,
+            rows_ingested: 0,
+            duplicate: true,
+            vehicle_id,
+            content_hash,
+        });
     }
 
-    let n = match crate::ingest::ingest_reader(body.as_ref(), vin, upload_id, &db).await {
+    let n = match crate::ingest::ingest_reader(body, vin, upload_id, db).await {
         Ok(n) => n,
         Err(e) => {
             let _ = client
@@ -123,10 +153,13 @@ async fn upload_csv(
         .await
         .map_err(|_| Error::Database)?;
 
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "rows_ingested": n,
-        "duplicate": false,
-    })))
+    Ok(CsvIngestResult {
+        upload_id,
+        rows_ingested,
+        duplicate: false,
+        vehicle_id,
+        content_hash,
+    })
 }
 
 fn packet_hash(body: &[u8]) -> String {

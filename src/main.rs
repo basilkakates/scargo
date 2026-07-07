@@ -8,6 +8,7 @@ use actix_web::{web, App, HttpServer};
 use scargo::api;
 use scargo::config::Settings;
 use scargo::db::{self, Database};
+use scargo::dropbox_worker;
 use std::io;
 
 const MAX_CSV_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -42,6 +43,11 @@ async fn main() -> std::io::Result<()> {
     db::migrate::run(&db)
         .await
         .expect("Failed to run database migrations");
+
+    if let Some(cfg) = settings.dropbox.clone() {
+        dropbox_worker::spawn(db.clone(), cfg);
+        tracing::info!("Dropbox worker started");
+    }
 
     let bind = format!("{}:{}", settings.http.host, settings.http.port);
     tracing::info!("Starting HTTP server on {bind}");

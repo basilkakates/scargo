@@ -459,7 +459,7 @@ fn hash_token(token: &str) -> String {
     out
 }
 
-fn encrypt_token(key: &[u8; 32], plaintext: &str) -> Result<Vec<u8>, Error> {
+pub(crate) fn encrypt_token(key: &[u8; 32], plaintext: &str) -> Result<Vec<u8>, Error> {
     let cipher = Aes256GcmSiv::new_from_slice(key).map_err(|_| Error::Internal)?;
     let nonce_bytes = *Uuid::new_v4().as_bytes();
     let nonce = Nonce::from_slice(&nonce_bytes[..12]);
@@ -471,8 +471,7 @@ fn encrypt_token(key: &[u8; 32], plaintext: &str) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-#[cfg(test)]
-fn decrypt_token(key: &[u8; 32], ciphertext: &[u8]) -> Result<String, Error> {
+pub(crate) fn decrypt_token(key: &[u8; 32], ciphertext: &[u8]) -> Result<String, Error> {
     if ciphertext.len() < 13 {
         return Err(Error::BadRequest("invalid encrypted token".into()));
     }

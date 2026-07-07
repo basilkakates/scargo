@@ -84,7 +84,11 @@ Dropbox ingest is off by default. Enable it only when
 `DROPBOX_APP_SECRET`, `SCARGO_BASE_URL`, and `SCARGO_TOKEN_ENCRYPTION_KEY` are
 set. The encryption key must decode to 32 bytes as hex or base64. v1 stores one
 Dropbox connection per signed-in account and fixes the ingest root to
-`/OBD Fusion/CsvLogs`.
+`/OBD Fusion/CsvLogs`. When enabled, Scargo starts a background worker that
+polls active connections, treats each direct child folder as the VIN or vehicle
+key, and ingests only `CsvLogs/<VIN>/*.csv` files for that account. Root-level
+CSV files are skipped and recorded in connection/file status because they do not
+identify a vehicle.
 
 ## Features
 

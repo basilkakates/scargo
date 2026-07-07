@@ -108,6 +108,11 @@ Dropbox support is disabled unless `SCARGO_DROPBOX_ENABLED=true`. When enabled,
 require `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `SCARGO_BASE_URL`, and
 `SCARGO_TOKEN_ENCRYPTION_KEY`; the encryption key must decode to 32 bytes as
 hex or base64. v1 fixes the Dropbox ingest root to `/OBD Fusion/CsvLogs`.
+Enabled deployments start a background worker that polls active account
+connections every `SCARGO_DROPBOX_POLL_SEC`, treats each direct child folder
+under that root as the VIN or vehicle key, and ingests only
+`/OBD Fusion/CsvLogs/<VIN>/*.csv`. CSV files directly under the root are skipped
+with a visible status error because no VIN folder exists.
 
 ### Build & run
 ```bash
@@ -440,7 +445,7 @@ reason to roll them up or expose aggregate cohorts.
 | `DROPBOX_APP_SECRET` | unset | Required only when Dropbox support is enabled |
 | `SCARGO_BASE_URL` | unset | Required only when Dropbox support is enabled; callback base URL |
 | `SCARGO_TOKEN_ENCRYPTION_KEY` | unset | Required only when Dropbox support is enabled; 32-byte hex or base64 key |
-| `SCARGO_DROPBOX_POLL_SEC` | `300` | Dropbox worker poll interval placeholder for enabled deployments |
+| `SCARGO_DROPBOX_POLL_SEC` | `300` | Dropbox worker poll interval for enabled deployments |
 | `SCARGO_API_TOKEN` | unset | Upload token for watcher and direct bulk ingest |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
 | `POSTGRES_PORT` | `5432` | Dev-mode local database port when URL is unset |
