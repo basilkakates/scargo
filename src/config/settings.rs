@@ -18,6 +18,9 @@ pub struct Settings {
     pub env: String,
     pub database_url: String,
     pub database_url_source: &'static str,
+    pub shared_link_ingest: bool,
+    pub shared_link_poll_seconds: u64,
+    pub shared_link_secret: String,
 }
 
 impl Settings {
@@ -25,6 +28,7 @@ impl Settings {
         let env =
             normalize_env(&non_empty_env("SCARGO_ENV").unwrap_or_else(|| DEFAULT_ENV.into()))?;
         let (database_url, database_url_source) = resolve_database_url(&env)?;
+        let shared_link_secret = resolve_shared_link_secret(&env)?;
 
         Ok(Self {
             http: HttpConfig {
@@ -34,6 +38,10 @@ impl Settings {
             env,
             database_url,
             database_url_source,
+            shared_link_ingest: parse_bool_env("SCARGO_SHARED_LINK_INGEST").unwrap_or(false),
+            shared_link_poll_seconds: parse_u64_env("SCARGO_SHARED_LINK_POLL_SECONDS")
+                .unwrap_or(3600),
+            shared_link_secret,
         })
     }
 }
@@ -51,6 +59,9 @@ impl Default for Settings {
             env: DEFAULT_ENV.into(),
             database_url,
             database_url_source,
+            shared_link_ingest: false,
+            shared_link_poll_seconds: 3600,
+            shared_link_secret: "dev-shared-link-secret".into(),
         }
     }
 }
@@ -75,6 +86,16 @@ fn resolve_database_url(env: &str) -> Result<(String, &'static str), String> {
     local_database_url()
 }
 
+fn resolve_shared_link_secret(env: &str) -> Result<String, String> {
+    if let Some(secret) = non_empty_env("SCARGO_SHARED_LINK_SECRET") {
+        return Ok(secret);
+    }
+    if env == "production" {
+        return Err("SCARGO_SHARED_LINK_SECRET is required when SCARGO_ENV=production".into());
+    }
+    Ok("dev-shared-link-secret".into())
+}
+
 fn local_database_url() -> Result<(String, &'static str), String> {
     let host = non_empty_env("POSTGRES_HOST").unwrap_or_else(|| DEFAULT_POSTGRES_HOST.into());
     let port = non_empty_env("POSTGRES_PORT").unwrap_or_else(|| DEFAULT_POSTGRES_PORT.into());
@@ -96,6 +117,23 @@ fn parse_http_port() -> Result<u16, String> {
             .parse()
             .map_err(|_| "SCARGO_HTTP_PORT must be a valid TCP port".into()),
         None => Ok(DEFAULT_HTTP_PORT),
+    }
+}
+
+fn parse_bool_env(name: &str) -> Result<bool, String> {
+    match non_empty_env(name).as_deref() {
+        Some("1" | "true" | "TRUE" | "yes" | "YES") => Ok(true),
+        Some("0" | "false" | "FALSE" | "no" | "NO") | None => Ok(false),
+        Some(_) => Err(format!("{name} must be true or false")),
+    }
+}
+
+fn parse_u64_env(name: &str) -> Result<u64, String> {
+    match non_empty_env(name) {
+        Some(value) => value
+            .parse()
+            .map_err(|_| format!("{name} must be a positive integer")),
+        None => Ok(3600),
     }
 }
 

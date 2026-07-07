@@ -11,6 +11,9 @@ const RESET_DDL: &[&str] = &[
     "DROP TABLE IF EXISTS obd2_metric_reading;",
     "DROP TABLE IF EXISTS account_vehicle_upload;",
     "DROP TABLE IF EXISTS account_vehicle_profile;",
+    "DROP TABLE IF EXISTS shared_ingest_file;",
+    "DROP TABLE IF EXISTS shared_ingest_source;",
+    "DROP TABLE IF EXISTS vin_decode_cache;",
     "DROP TABLE IF EXISTS ingest_upload;",
     "DROP TABLE IF EXISTS vehicle_ownership;",
     "DROP TABLE IF EXISTS obd2_metric;",
@@ -87,6 +90,48 @@ const CORE_DDL: &[&str] = &[
         access_revoked_at TIMESTAMPTZ,
         PRIMARY KEY (account_id, upload_id)
     );",
+    "CREATE TABLE IF NOT EXISTS shared_ingest_source (
+        id UUID PRIMARY KEY,
+        account_id UUID NOT NULL UNIQUE REFERENCES account(id) ON DELETE CASCADE,
+        encrypted_url TEXT NOT NULL,
+        link_label TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+        poll_interval_seconds INT4 NOT NULL DEFAULT 3600,
+        next_poll_at TIMESTAMPTZ,
+        last_sync_at TIMESTAMPTZ,
+        last_success_at TIMESTAMPTZ,
+        latest_error TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );",
+    "CREATE TABLE IF NOT EXISTS shared_ingest_file (
+        id UUID PRIMARY KEY,
+        source_id UUID NOT NULL REFERENCES shared_ingest_source(id) ON DELETE CASCADE,
+        account_id UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        vehicle_key TEXT NOT NULL DEFAULT '',
+        content_hash TEXT NOT NULL DEFAULT '',
+        upload_id UUID REFERENCES ingest_upload(id),
+        status TEXT NOT NULL DEFAULT 'seen',
+        rows_ingested BIGINT NOT NULL DEFAULT 0,
+        latest_error TEXT NOT NULL DEFAULT '',
+        seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingested_at TIMESTAMPTZ,
+        UNIQUE (source_id, path, content_hash)
+    );",
+    "CREATE TABLE IF NOT EXISTS vin_decode_cache (
+        vin TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        year INT4 NOT NULL DEFAULT 0,
+        make TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        engine_family TEXT NOT NULL DEFAULT '',
+        raw_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source TEXT NOT NULL DEFAULT 'vpic',
+        fetched_at TIMESTAMPTZ,
+        next_retry_at TIMESTAMPTZ,
+        latest_error TEXT NOT NULL DEFAULT ''
+    );",
     "INSERT INTO account (id, username, label, display_name, is_guest)
         VALUES ('889705d1-e9c0-53ca-9415-37f0afc024ff', 'guest', 'local-dev', 'Guest', TRUE)
         ON CONFLICT (id) DO UPDATE SET
@@ -161,6 +206,10 @@ const RUNTIME_DDL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_account_api_token_account
         ON account_api_token (account_id, created_at DESC)
         WHERE revoked_at IS NULL;",
+    "CREATE INDEX IF NOT EXISTS idx_shared_ingest_source_poll
+        ON shared_ingest_source (status, next_poll_at);",
+    "CREATE INDEX IF NOT EXISTS idx_shared_ingest_file_source_seen
+        ON shared_ingest_file (source_id, seen_at DESC);",
     "ALTER TABLE obd2_metric_reading SET (
         timescaledb.compress,
         timescaledb.compress_segmentby = 'vehicle_id, metric_id',
@@ -194,6 +243,9 @@ const ANALYZE_SQL: &[&str] = &[
     "ANALYZE ingest_upload;",
     "ANALYZE account_vehicle_profile;",
     "ANALYZE account_vehicle_upload;",
+    "ANALYZE shared_ingest_source;",
+    "ANALYZE shared_ingest_file;",
+    "ANALYZE vin_decode_cache;",
     "ANALYZE obd2_metric;",
     "ANALYZE obd2_metric_reading;",
     "ANALYZE vehicle_metric_day;",

@@ -76,13 +76,17 @@ Keep real secrets in ignored `.env` or `.env.*` files. The tracked
 ignored `.env.smoke` for local smoke-test database credentials.
 
 Production must run with `SCARGO_ENV=production` and an explicit
-`SCARGO_DATABASE_URL` supplied by the environment or ignored `.env`. Runtime
-config is environment-only: use `SCARGO_*` for app settings and `POSTGRES_*`
-for the dev database fallback. See `.env.example` for placeholder settings.
+`SCARGO_DATABASE_URL` supplied by the environment or ignored `.env`. Production
+also requires `SCARGO_SHARED_LINK_SECRET` so stored shared links are encrypted
+with a deployment secret. Runtime config is environment-only: use `SCARGO_*`
+for app settings and `POSTGRES_*` for the dev database fallback. See
+`.env.example` for placeholder settings.
 Dropbox OAuth ingest was removed because OBD Fusion writes to its own Dropbox
 app folder and Scargo app-folder OAuth cannot read another app's folder without
-Full Dropbox access. Shared-link ingest is planned in
-`todo/shared-link-ingest/PLAN.md`.
+Full Dropbox access. Signed-in users can instead save one Dropbox shared folder
+link from the dashboard. Scargo stores the link server-side, never returns the
+full link to the browser, and can poll the folder when
+`SCARGO_SHARED_LINK_INGEST=true`.
 
 ## Features
 
@@ -91,6 +95,7 @@ Full Dropbox access. Shared-link ingest is planned in
 - **Trend analysis** — query historical readings by channel and vehicle
 - **Relationship analysis** — graph numeric metrics against each other and run one-time correlation reports
 - **Owner-scoped reads** — vehicle and raw telemetry APIs are scoped by account
+- **Shared-link ingest** — poll one account-owned Dropbox shared folder link
 - **Dashboard history** — browse older readings with relative or custom time windows
 - **Web dashboard** — real-time charts with Chart.js, zero build step
 
@@ -213,6 +218,20 @@ curl --data-binary @CSVLog_20260327_185401.csv \
 
 Duplicate headers are retained with stable suffixes such as
 `intake_manifold_absolute_pressure` and `intake_manifold_absolute_pressure_2`.
+
+Signed-in non-guest dashboard sessions can manage one shared Dropbox folder
+source at `/api/ingest-sources/shared-link`. `GET` returns redacted source
+status and counts. `PUT` saves or replaces the URL. `DELETE` removes the source
+without deleting telemetry. `POST /pause` toggles active/paused, and
+`POST /sync-now` runs one server-side sync. Bearer upload tokens and guests
+cannot manage shared links. The shared folder archive contract is
+`<vehicle-key>/<file>.csv`; root-level CSV files are recorded as skipped,
+nested CSVs are skipped for v1, and non-CSV files are ignored. Exact
+17-character VIN folders trigger a cached NHTSA vPIC lookup during sync.
+
+Anyone with the Dropbox shared link can read the shared folder outside Scargo.
+Share a narrow OBD Fusion `CsvLogs` folder, and revoke that link in Dropbox to
+cut Dropbox-side access.
 
 ## One-time relationship analysis
 

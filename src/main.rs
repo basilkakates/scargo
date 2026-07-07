@@ -42,6 +42,7 @@ async fn main() -> std::io::Result<()> {
     db::migrate::run(&db)
         .await
         .expect("Failed to run database migrations");
+    api::shared_link_ingest::spawn_worker(db.clone(), settings.clone());
 
     let bind = format!("{}:{}", settings.http.host, settings.http.port);
     tracing::info!("Starting HTTP server on {bind}");

@@ -8,6 +8,7 @@ pub mod pairs;
 pub mod privacy;
 mod query;
 pub mod routes;
+pub mod shared_link_ingest;
 pub mod summary;
 pub mod trends;
 pub mod vehicles;

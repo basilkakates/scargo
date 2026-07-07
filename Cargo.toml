@@ -8,17 +8,20 @@ description = "OBD2 telematics ingestion, analysis, and dashboard"
 [dependencies]
 actix-web = "4"
 actix-files = "0.6"
+aes-gcm = "0.10"
 argon2 = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-postgres = { version = "0.7", features = ["runtime", "with-uuid-1", "with-chrono-0_4"] }
 deadpool-postgres = "0.14"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
+zip = { version = "2", default-features = false, features = ["deflate"] }

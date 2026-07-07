@@ -230,6 +230,41 @@ async function apiPostJson(path, body = {}) {
   return r.json();
 }
 
+async function apiPutJson(path, body = {}) {
+  const r = await fetch(API + path, {
+    method: 'PUT',
+    headers: scopedHeaders({ 'Content-Type': 'application/json' }),
+    credentials: 'same-origin',
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let message = `${r.status}`;
+    try {
+      const payload = await r.json();
+      if (payload.error) message = payload.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return r.json();
+}
+
+async function apiDelete(path) {
+  const r = await fetch(API + path, {
+    method: 'DELETE',
+    headers: scopedHeaders(),
+    credentials: 'same-origin',
+  });
+  if (!r.ok) {
+    let message = `${r.status}`;
+    try {
+      const payload = await r.json();
+      if (payload.error) message = payload.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return r.json();
+}
+
 async function checkHealth() {
   try { await apiGet('/health'); setStatus(true); }
   catch { setStatus(false); }
@@ -348,6 +383,8 @@ function setAccount(account) {
   if (logoutButton) logoutButton.style.display = isSignedInAccount() ? '' : 'none';
   const tokenControls = document.getElementById('token-controls');
   if (tokenControls) tokenControls.style.display = isSignedInAccount() ? '' : 'none';
+  const sharedPanel = document.getElementById('shared-link-panel');
+  if (sharedPanel) sharedPanel.style.display = isSignedInAccount() ? '' : 'none';
   updateChromeState();
 }
 
@@ -413,6 +450,90 @@ async function reloadAccountData() {
   await loadVehicles();
   await loadChannels();
   await render();
+}
+
+function setSharedLinkStatus(text, kind = '') {
+  const status = document.getElementById('shared-link-status');
+  if (!status) return;
+  status.textContent = text;
+  status.className = kind;
+}
+
+function renderSharedLinkStatus(payload) {
+  const input = document.getElementById('shared-link-input');
+  const pause = document.getElementById('shared-link-pause-btn');
+  const del = document.getElementById('shared-link-delete-btn');
+  const sync = document.getElementById('shared-link-sync-btn');
+  const configured = Boolean(payload?.configured);
+  if (input) input.placeholder = configured ? payload.link_label || 'Saved Dropbox link' : 'https://www.dropbox.com/sh/...';
+  if (pause) {
+    pause.disabled = !configured;
+    pause.textContent = payload?.active ? 'Pause' : 'Resume';
+  }
+  if (del) del.disabled = !configured;
+  if (sync) sync.disabled = !configured || !payload?.active;
+  if (!configured) {
+    setSharedLinkStatus('No shared link saved');
+    return;
+  }
+  const counts = `${payload.ingested_count || 0} ingested, ${payload.duplicate_count || 0} duplicate, ${payload.skipped_count || 0} skipped`;
+  const err = payload.latest_error ? ` - ${payload.latest_error}` : '';
+  setSharedLinkStatus(`${payload.active ? 'Active' : 'Paused'} - ${counts}${err}`, payload.latest_error ? 'err' : 'ok');
+}
+
+async function loadSharedLinkStatus() {
+  if (!isSignedInAccount()) return;
+  try {
+    renderSharedLinkStatus(await apiGet('/ingest-sources/shared-link'));
+  } catch (err) {
+    setSharedLinkStatus(`Shared link unavailable: ${err.message}`, 'err');
+  }
+}
+
+async function saveSharedLink() {
+  const input = document.getElementById('shared-link-input');
+  const url = input.value.trim();
+  if (!url) {
+    setSharedLinkStatus('Dropbox shared folder URL required', 'err');
+    return;
+  }
+  setSharedLinkStatus('Saving...');
+  try {
+    const payload = await apiPutJson('/ingest-sources/shared-link', { url });
+    input.value = '';
+    renderSharedLinkStatus(payload);
+  } catch (err) {
+    setSharedLinkStatus(`Save failed: ${err.message}`, 'err');
+  }
+}
+
+async function toggleSharedLinkPause() {
+  setSharedLinkStatus('Updating...');
+  try {
+    renderSharedLinkStatus(await apiPostJson('/ingest-sources/shared-link/pause'));
+  } catch (err) {
+    setSharedLinkStatus(`Update failed: ${err.message}`, 'err');
+  }
+}
+
+async function deleteSharedLink() {
+  setSharedLinkStatus('Deleting...');
+  try {
+    renderSharedLinkStatus(await apiDelete('/ingest-sources/shared-link'));
+  } catch (err) {
+    setSharedLinkStatus(`Delete failed: ${err.message}`, 'err');
+  }
+}
+
+async function syncSharedLink() {
+  setSharedLinkStatus('Syncing...');
+  try {
+    renderSharedLinkStatus(await apiPostJson('/ingest-sources/shared-link/sync-now'));
+    await reloadAccountData();
+  } catch (err) {
+    await loadSharedLinkStatus();
+    setSharedLinkStatus(`Sync failed: ${err.message}`, 'err');
+  }
 }
 
 function formatTimestamp(value) {
@@ -914,6 +1035,10 @@ document.getElementById('sign-in-btn').addEventListener('click', redirectToAuthP
 document.getElementById('token-btn').addEventListener('click', generateUploadToken);
 document.getElementById('copy-token-btn').addEventListener('click', copyUploadToken);
 document.getElementById('upload-form').addEventListener('submit', handleUpload);
+document.getElementById('shared-link-save-btn').addEventListener('click', saveSharedLink);
+document.getElementById('shared-link-pause-btn').addEventListener('click', toggleSharedLinkPause);
+document.getElementById('shared-link-delete-btn').addEventListener('click', deleteSharedLink);
+document.getElementById('shared-link-sync-btn').addEventListener('click', syncSharedLink);
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   await loadChannels();
   await render();
@@ -992,6 +1117,7 @@ document.getElementById('load-more-btn').addEventListener('click', () => {
     setTokenStatus('Account created. Save this token now.');
   }
   updateChromeState();
+  await loadSharedLinkStatus();
   checkHealth();
   syncTimeWindowControls();
   await loadVehicles();

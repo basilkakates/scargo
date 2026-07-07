@@ -12,6 +12,7 @@ ownership, and user-specific data must not leak through comparison features.
 | Account identity | username, password hash, session/token hash | Internal only |
 | Vehicle identity | VIN, stable vehicle UUID | VIN internal only; UUID exposed only to owners |
 | Ownership | account-to-upload access rows, vehicle profile sharing preferences | Internal only |
+| Shared ingest source | encrypted Dropbox shared link, redacted label, per-file ledger | Internal only |
 | Raw telemetry | timestamped channel values | Owner-scoped only |
 | Derived telemetry | normalized channels, calculated metrics | Owner-scoped until policy-allowed aggregation |
 | Sensitive telemetry | GPS/location and phone sensor channels | Owner-scoped raw only |
@@ -36,6 +37,13 @@ On CSV ingest, Scargo:
 4. Creates or reuses one `ingest_upload` row for that vehicle and content hash.
 5. Links the upload to the account through `account_vehicle_upload` with private access enabled.
 6. Stores raw readings and daily rollups keyed by `upload_id`, vehicle id, channel, and time.
+
+Shared-link ingest uses the same account-scoped CSV helper. Managing a shared
+link requires an HttpOnly dashboard session for a signed-in non-guest user;
+bearer upload tokens and guests cannot create, inspect, pause, sync, or delete
+shared-link sources. The API returns only a redacted label and sync counts, not
+the stored Dropbox URL. Deleting a source removes the URL and file ledger while
+leaving already ingested telemetry and public approval state intact.
 
 Read APIs for vehicles, latest readings, dashboard series, trends, and summaries
 are scoped to the request account through uploads whose
@@ -98,8 +106,9 @@ volume grows.
 - Keep raw telemetry compressed for recent detail only; retain durable daily
   rollups for long-term owner views and public cohorts, limited to metric-policy
   allowlisted vehicle channels.
-- Keep public cohort metadata enrichment offline. VIN lookups and future-VIN
-  inference should run from local batch scripts, not ingest or read paths.
+- Keep future-VIN inference offline. Shared-link sync may fetch exact
+  17-character VIN folder metadata from NHTSA vPIC into `vin_decode_cache`, but
+  it does not guess metadata for non-VIN vehicle keys.
 - Move heavy ingest, simulation, and cohort calculations to async jobs only when
   request latency or database load requires it.
 - Use discovered correlations to reduce future client uploads to the smallest
@@ -119,6 +128,9 @@ Implemented:
   preference for a vehicle.
 - `account_vehicle_upload` stores the per-account link to uploads, including
   private-access state and exact-VIN sharing state.
+- `shared_ingest_source` stores one encrypted shared-link source per account.
+- `shared_ingest_file` stores per-source path/content-hash sync status.
+- `vin_decode_cache` stores cached exact-VIN NHTSA vPIC results and retry state.
 - CSV ingest links uploads to the request account instead of asserting durable
   vehicle ownership.
 - Vehicle list, latest readings, dashboard series, trends, and summaries are
@@ -151,6 +163,8 @@ Implemented:
   `vehicle_metric_day` and public cohorts.
 - Vehicles missing `model` or `engine_family` remain owner-visible through
   account-scoped endpoints but are excluded from public cohorts.
+- `/api/ingest-sources/shared-link` lets signed-in non-guest users save,
+  delete, pause/resume, and sync one Dropbox shared folder source.
 - Public cohort metadata is enriched offline from ignored local NHTSA vPIC
   cache rows, with conservative future-VIN inference only when VIN positions
   1-8 plus model year map to one unique metadata tuple.

@@ -54,6 +54,7 @@ scargo/
 │       ├── channels.rs # GET  /api/channels — dashboard channel registry
 │       ├── cohort.rs   # GET  /api/analysis/cohort/{channel} — aggregate comparisons
 │       ├── ingest.rs   # POST /api/ingest/csv?vin=VIN — upload CSV file
+│       ├── shared_link_ingest.rs # Shared Dropbox link source API + poll worker
 │       ├── dashboard.rs # GET  /api/analysis/dashboard — batched dashboard series
 │       ├── trends.rs   # GET  /api/analysis/trends/{channel} — raw time series
 │       ├── summary.rs  # GET  /api/analysis/summary/{channel} — time_bucket aggregates
@@ -147,6 +148,9 @@ Core tables:
 | `ingest_upload` (table) | Vehicle+content hash de-duplication plus approval timestamps for public exact-VIN and cohort sharing |
 | `account_vehicle_profile` (table) | Per-account default sharing preference for a vehicle's exact-VIN public stats |
 | `account_vehicle_upload` (table) | Per-account link to uploads, including private-access state and exact-VIN sharing flag |
+| `shared_ingest_source` (table) | One encrypted shared Dropbox folder URL per account plus poll state |
+| `shared_ingest_file` (table) | Per-source file ledger keyed by archive path and content hash |
+| `vin_decode_cache` (table) | Cached exact-VIN NHTSA vPIC metadata and retry state |
 | `obd2_metric` (table) | Global metric registry: one row per key with label, unit, and strict `value_kind` |
 | `obd2_metric_reading` (table) | Time-series raw metric values: upload_id, time, vehicle_id, metric_id, and exactly one payload column (`value` or `text_value`) |
 | `vehicle_metric_day` (table) | Durable numeric daily rollup: bucket_day, upload_id, vehicle_id, metric_id, value_sum, min_value, max_value, reading_count |
@@ -181,6 +185,9 @@ time indexes.
 | GET | `/api/auth/me` | Current account or dev/test guest fallback, plus `capabilities.approve_pending_public_stats` |
 | POST | `/api/auth/tokens` | Create an upload API token for the logged-in account |
 | POST | `/api/ingest/csv?vin=VIN` | Upload live OBD CSV export body → `{"rows_ingested": N}` or `400` on metric value-kind conflict |
+| GET/PUT/DELETE | `/api/ingest-sources/shared-link` | Inspect, save/replace, or remove one signed-in account Dropbox shared folder source |
+| POST | `/api/ingest-sources/shared-link/pause` | Pause or resume the current account's shared-link source |
+| POST | `/api/ingest-sources/shared-link/sync-now` | Run one server-side shared-link sync for the current account |
 | GET | `/api/analysis/dashboard` | Batched dashboard series. Query: `?view=summary`, `?limit=N`, `?channel_limit=N`, `?vehicle_id=UUID`, `?start=...`, `?end=...`, `?bucket=1d|1w|1mon`, `?channels=key1,key2` |
 | GET | `/api/analysis/pairs` | Owner-scoped exact-time numeric metric pairs. Query: `?x=key1&y=key2`, optional `vehicle_id`, `start`, `end`, `limit` |
 | GET | `/api/analysis/trends/{channel}` | Raw time series. Query: `?limit=N`, `?vehicle_id=UUID` |
@@ -259,6 +266,18 @@ rebuilds `vehicle_metric_day` and finalizes runtime indexes/policies at the end.
 It resolves `--api-token`/`SCARGO_API_TOKEN` before loading when tokens already
 exist, otherwise dev/test rebuilds use the guest account. It continues past bad
 CSVs, prints a failure summary, and exits non-zero if any file failed.
+
+Deployed Dropbox ingestion uses one saved shared folder link per signed-in
+non-guest account. Set `SCARGO_SHARED_LINK_INGEST=true` to enable the background
+poller and `SCARGO_SHARED_LINK_POLL_SECONDS` for its interval. Shared-link sync
+downloads the folder archive server-side, accepts only direct
+`<vehicle-key>/<file>.csv` children, records root or nested CSV skips in
+`shared_ingest_file`, skips already ingested path+hash rows, and calls the same
+account-scoped CSV helper as manual uploads. Exact 17-character VIN folder names
+use the cached NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never
+trigger vPIC. The full shared URL is not returned to the browser after save.
+Users should share a narrow OBD Fusion `CsvLogs` folder and revoke the link in
+Dropbox to cut external access.
 
 Incremental drop-folder uploads still use `scripts/scan-and-ingest.py`. The
 watcher records successful vehicle-key+SHA-256 uploads in
@@ -429,6 +448,9 @@ reason to roll them up or expose aggregate cohorts.
 | `SCARGO_HTTP_PORT` | `8080` | Bind port |
 | `SCARGO_ENABLE_GUEST` | dev/test enabled, production disabled | Enable or disable unauthenticated guest fallback |
 | `SCARGO_API_TOKEN` | unset | Upload token for watcher and direct bulk ingest |
+| `SCARGO_SHARED_LINK_INGEST` | `false` | Enable background polling for saved shared Dropbox links |
+| `SCARGO_SHARED_LINK_POLL_SECONDS` | `3600` | Poll interval for active shared-link sources |
+| `SCARGO_SHARED_LINK_SECRET` | dev placeholder | AES-GCM secret for stored shared links; required in production |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
 | `POSTGRES_PORT` | `5432` | Dev-mode local database port when URL is unset |
 | `POSTGRES_USER` | `scargo` | Dev-mode local database user when URL is unset |
