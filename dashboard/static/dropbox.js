@@ -1,7 +1,10 @@
 const API = '/api';
 const THEME_STORAGE = 'scargo.theme';
+const DEFAULT_ROOT = '/OBD Fusion/CsvLogs';
 
 let currentAccount = null;
+let currentConnection = null;
+let syncPollTimer = null;
 
 function loadTheme() {
   const saved = localStorage.getItem(THEME_STORAGE);
@@ -44,7 +47,7 @@ async function apiError(res) {
     if (payload.err) message = payload.err;
     if (payload.error) message = payload.error;
   } catch {
-    // ignore malformed error payloads
+    // ignore malformed payloads
   }
   return new Error(message);
 }
@@ -63,7 +66,7 @@ async function apiSend(path, method, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw await apiError(res);
-  return res.json();
+  return res.status === 204 ? {} : res.json();
 }
 
 async function loadAccount() {
@@ -95,116 +98,199 @@ function formatTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? 'Never' : parsed.toLocaleString();
 }
 
-function renderSharedLinkStatus(payload) {
-  const configured = Boolean(payload?.configured);
-  const active = Boolean(payload?.active);
-  const label = configured ? (payload.link_label || 'Saved Dropbox link') : 'Not saved';
-  const counts = [
-    payload?.ingested_count || 0,
-    payload?.duplicate_count || 0,
-    payload?.skipped_count || 0,
-  ];
+function fileCounts(payload) {
+  const ingested = payload?.ingested_count || 0;
+  const duplicate = payload?.duplicate_count || 0;
+  return `${ingested} / ${duplicate}`;
+}
 
-  const input = document.getElementById('shared-link-input');
-  if (input) {
-    input.placeholder = configured ? label : 'https://www.dropbox.com/scl/fo/...';
+function stopSyncPolling() {
+  if (syncPollTimer) {
+    clearInterval(syncPollTimer);
+    syncPollTimer = null;
   }
-  document.getElementById('saved-link-label').textContent = label;
+}
+
+function ensureSyncPolling() {
+  const needsPolling = currentConnection?.connected && currentConnection?.sync_state !== 'idle';
+  if (!needsPolling) {
+    stopSyncPolling();
+    return;
+  }
+  if (syncPollTimer) return;
+  syncPollTimer = setInterval(() => {
+    loadDropboxConnection().catch(() => {
+      stopSyncPolling();
+    });
+  }, 5000);
+}
+
+function renderConnection(payload) {
+  currentConnection = payload || null;
+  const enabled = Boolean(payload?.enabled);
+  const connected = Boolean(payload?.connected);
+  const paused = payload?.status === 'paused';
+  const syncState = payload?.sync_state || 'idle';
+
+  const rootInput = document.getElementById('dropbox-root-input');
+  if (rootInput) {
+    rootInput.placeholder = DEFAULT_ROOT;
+    if (!rootInput.dataset.dirty) {
+      rootInput.value = payload?.root_path || DEFAULT_ROOT;
+    }
+  }
+
+  document.getElementById('saved-root-label').textContent = payload?.root_path || DEFAULT_ROOT;
   document.getElementById('last-sync-at').textContent = formatTimestamp(payload?.last_sync_at);
   document.getElementById('last-success-at').textContent = formatTimestamp(payload?.last_success_at);
-  document.getElementById('file-counts').textContent = counts.join(' / ');
+  document.getElementById('file-counts').textContent = fileCounts(payload);
+  document.getElementById('sync-state').textContent = syncState;
 
-  const pause = document.getElementById('shared-link-pause-btn');
-  const del = document.getElementById('shared-link-delete-btn');
-  const sync = document.getElementById('shared-link-sync-btn');
-  if (pause) {
-    pause.disabled = !configured;
-    pause.textContent = active ? 'Pause' : 'Resume';
+  const connect = document.getElementById('dropbox-connect-btn');
+  const save = document.getElementById('dropbox-save-btn');
+  const pause = document.getElementById('dropbox-pause-btn');
+  const sync = document.getElementById('dropbox-sync-btn');
+  const del = document.getElementById('dropbox-delete-btn');
+
+  connect.disabled = !enabled;
+  connect.hidden = connected;
+  save.disabled = !connected;
+  save.hidden = !connected;
+  pause.disabled = !connected;
+  pause.hidden = !connected;
+  pause.textContent = paused ? 'Resume' : 'Pause';
+  sync.disabled = !connected || paused;
+  sync.hidden = !connected;
+  del.disabled = !connected;
+  del.hidden = !connected;
+
+  if (!enabled) {
+    setStatus('dropbox-status', 'Dropbox OAuth is disabled on this server', 'err');
+  } else if (!connected) {
+    setStatus('dropbox-status', 'Dropbox not connected', '');
+  } else {
+    const latestError = payload?.latest_error ? ` - ${payload.latest_error}` : '';
+    const state = paused ? 'Paused' : `Active - ${syncState}`;
+    setStatus('dropbox-status', `${state}${latestError}`, payload?.latest_error ? 'err' : 'ok');
   }
-  if (del) del.disabled = !configured;
-  if (sync) sync.disabled = !configured || !active;
 
-  if (!configured) {
-    setStatus('shared-link-status', 'No shared link saved');
-    return;
-  }
-
-  const summary = `${active ? 'Active' : 'Paused'} - ${counts[0]} ingested, ${counts[1]} duplicate, ${counts[2]} skipped`;
-  const latestError = payload?.latest_error ? ` - ${payload.latest_error}` : '';
-  setStatus('shared-link-status', `${summary}${latestError}`, payload?.latest_error ? 'err' : 'ok');
+  ensureSyncPolling();
 }
 
-async function loadSharedLinkStatus() {
+async function loadDropboxConnection() {
   try {
-    renderSharedLinkStatus(await apiGet('/ingest-sources/shared-link'));
+    renderConnection(await apiGet('/dropbox/connection'));
     setStatus('page-status', '');
   } catch (err) {
-    setStatus('shared-link-status', `Shared link unavailable: ${err.message}`, 'err');
+    stopSyncPolling();
+    setStatus('dropbox-status', `Dropbox unavailable: ${err.message}`, 'err');
   }
 }
 
-async function saveSharedLink() {
-  const input = document.getElementById('shared-link-input');
-  const url = input.value.trim();
-  if (!url) {
-    setStatus('page-status', 'Dropbox shared folder URL required', 'err');
-    return;
-  }
-  setStatus('page-status', 'Saving...');
+function currentRootPath() {
+  const value = document.getElementById('dropbox-root-input').value.trim();
+  return value || DEFAULT_ROOT;
+}
+
+async function startDropboxOAuth() {
+  setStatus('page-status', 'Redirecting to Dropbox...');
   try {
-    const payload = await apiSend('/ingest-sources/shared-link', 'PUT', { url });
-    input.value = '';
-    renderSharedLinkStatus(payload);
-    setStatus('page-status', 'Shared link saved.', 'ok');
+    const payload = await apiSend('/dropbox/oauth/start', 'POST', {
+      redirect_path: '/dropbox.html',
+      root_path: currentRootPath(),
+    });
+    if (payload.authorize_url) {
+      window.location.assign(payload.authorize_url);
+      return;
+    }
+    throw new Error('missing Dropbox authorize URL');
   } catch (err) {
-    setStatus('page-status', `Save failed: ${err.message}`, 'err');
+    setStatus('page-status', `Connect failed: ${err.message}`, 'err');
   }
 }
 
-async function toggleSharedLinkPause() {
+async function saveDropboxFolder() {
+  setStatus('page-status', 'Saving folder...');
+  try {
+    renderConnection(await apiSend('/dropbox/connection/folder', 'POST', {
+      root_path: currentRootPath(),
+    }));
+    document.getElementById('dropbox-root-input').dataset.dirty = '';
+    setStatus('page-status', 'Dropbox folder saved.', 'ok');
+  } catch (err) {
+    setStatus('page-status', `Folder save failed: ${err.message}`, 'err');
+  }
+}
+
+async function toggleDropboxPause() {
   setStatus('page-status', 'Updating...');
   try {
-    renderSharedLinkStatus(await apiSend('/ingest-sources/shared-link/pause', 'POST'));
-    setStatus('page-status', 'Shared link state updated.', 'ok');
+    const paused = currentConnection?.status !== 'paused';
+    renderConnection(await apiSend('/dropbox/connection/pause', 'POST', { paused }));
+    setStatus('page-status', 'Dropbox state updated.', 'ok');
   } catch (err) {
     setStatus('page-status', `Update failed: ${err.message}`, 'err');
   }
 }
 
-async function deleteSharedLink() {
-  const confirmed = window.confirm('Delete the saved Dropbox source for this account? Ingested telemetry stays in Scargo.');
-  if (!confirmed) return;
-  setStatus('page-status', 'Deleting...');
+async function syncDropboxNow() {
+  setStatus('page-status', 'Queued Dropbox sync...');
   try {
-    renderSharedLinkStatus(await apiSend('/ingest-sources/shared-link', 'DELETE'));
-    setStatus('page-status', 'Shared link deleted.', 'ok');
+    renderConnection(await apiSend('/dropbox/connection/sync-now', 'POST'));
+    ensureSyncPolling();
+    setStatus('page-status', 'Dropbox sync queued.', 'ok');
   } catch (err) {
-    setStatus('page-status', `Delete failed: ${err.message}`, 'err');
-  }
-}
-
-async function syncSharedLink() {
-  setStatus('page-status', 'Syncing...');
-  try {
-    renderSharedLinkStatus(await apiSend('/ingest-sources/shared-link/sync-now', 'POST'));
-    setStatus('page-status', 'Sync complete.', 'ok');
-  } catch (err) {
-    await loadSharedLinkStatus();
+    await loadDropboxConnection();
     setStatus('page-status', `Sync failed: ${err.message}`, 'err');
   }
 }
 
+async function disconnectDropbox() {
+  const confirmed = window.confirm('Disconnect Dropbox for this account? Ingested telemetry stays in Scargo.');
+  if (!confirmed) return;
+  setStatus('page-status', 'Disconnecting...');
+  try {
+    await apiSend('/dropbox/connection', 'DELETE');
+    renderConnection({
+      enabled: true,
+      connected: false,
+      root_path: DEFAULT_ROOT,
+      sync_state: 'idle',
+      ingested_count: 0,
+      duplicate_count: 0,
+    });
+    setStatus('page-status', 'Dropbox disconnected.', 'ok');
+  } catch (err) {
+    setStatus('page-status', `Disconnect failed: ${err.message}`, 'err');
+  }
+}
+
+function wireFlashMessage() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('dropbox') === 'connected') {
+    setStatus('page-status', 'Dropbox connected.', 'ok');
+    params.delete('dropbox');
+    const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+    window.history.replaceState({}, '', next);
+  }
+}
+
 document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
-document.getElementById('refresh-btn').addEventListener('click', loadSharedLinkStatus);
+document.getElementById('refresh-btn').addEventListener('click', loadDropboxConnection);
 document.getElementById('logout-btn').addEventListener('click', logout);
-document.getElementById('shared-link-save-btn').addEventListener('click', saveSharedLink);
-document.getElementById('shared-link-pause-btn').addEventListener('click', toggleSharedLinkPause);
-document.getElementById('shared-link-delete-btn').addEventListener('click', deleteSharedLink);
-document.getElementById('shared-link-sync-btn').addEventListener('click', syncSharedLink);
+document.getElementById('dropbox-connect-btn').addEventListener('click', startDropboxOAuth);
+document.getElementById('dropbox-save-btn').addEventListener('click', saveDropboxFolder);
+document.getElementById('dropbox-pause-btn').addEventListener('click', toggleDropboxPause);
+document.getElementById('dropbox-sync-btn').addEventListener('click', syncDropboxNow);
+document.getElementById('dropbox-delete-btn').addEventListener('click', disconnectDropbox);
+document.getElementById('dropbox-root-input').addEventListener('input', (event) => {
+  event.target.dataset.dirty = '1';
+});
 
 (async function init() {
   applyTheme(loadTheme());
+  wireFlashMessage();
   const account = await loadAccount();
   if (!account) return;
-  await loadSharedLinkStatus();
+  await loadDropboxConnection();
 })();

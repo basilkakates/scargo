@@ -5,6 +5,8 @@ const DEFAULT_POSTGRES_USER: &str = "scargo";
 const DEFAULT_POSTGRES_DB: &str = "scargo";
 const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_HTTP_PORT: u16 = 8080;
+const DEFAULT_DROPBOX_ROOT_PATH: &str = "/OBD Fusion/CsvLogs";
+const DEFAULT_DROPBOX_POLL_SEC: u64 = 300;
 
 #[derive(Debug, Clone)]
 pub struct HttpConfig {
@@ -13,14 +15,22 @@ pub struct HttpConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct DropboxConfig {
+    pub app_key: String,
+    pub app_secret: String,
+    pub base_url: String,
+    pub token_encryption_key: [u8; 32],
+    pub poll_sec: u64,
+    pub root_path: &'static str,
+}
+
+#[derive(Debug, Clone)]
 pub struct Settings {
     pub http: HttpConfig,
     pub env: String,
     pub database_url: String,
     pub database_url_source: &'static str,
-    pub shared_link_ingest: bool,
-    pub shared_link_poll_seconds: u64,
-    pub shared_link_secret: String,
+    pub dropbox: Option<DropboxConfig>,
 }
 
 impl Settings {
@@ -28,7 +38,6 @@ impl Settings {
         let env =
             normalize_env(&non_empty_env("SCARGO_ENV").unwrap_or_else(|| DEFAULT_ENV.into()))?;
         let (database_url, database_url_source) = resolve_database_url(&env)?;
-        let shared_link_secret = resolve_shared_link_secret(&env)?;
 
         Ok(Self {
             http: HttpConfig {
@@ -38,10 +47,7 @@ impl Settings {
             env,
             database_url,
             database_url_source,
-            shared_link_ingest: parse_bool_env("SCARGO_SHARED_LINK_INGEST").unwrap_or(false),
-            shared_link_poll_seconds: parse_u64_env("SCARGO_SHARED_LINK_POLL_SECONDS")
-                .unwrap_or(3600),
-            shared_link_secret,
+            dropbox: read_dropbox_config()?,
         })
     }
 }
@@ -59,9 +65,7 @@ impl Default for Settings {
             env: DEFAULT_ENV.into(),
             database_url,
             database_url_source,
-            shared_link_ingest: false,
-            shared_link_poll_seconds: 3600,
-            shared_link_secret: "dev-shared-link-secret".into(),
+            dropbox: None,
         }
     }
 }
@@ -84,16 +88,6 @@ fn resolve_database_url(env: &str) -> Result<(String, &'static str), String> {
     }
 
     local_database_url()
-}
-
-fn resolve_shared_link_secret(env: &str) -> Result<String, String> {
-    if let Some(secret) = non_empty_env("SCARGO_SHARED_LINK_SECRET") {
-        return Ok(secret);
-    }
-    if env == "production" {
-        return Err("SCARGO_SHARED_LINK_SECRET is required when SCARGO_ENV=production".into());
-    }
-    Ok("dev-shared-link-secret".into())
 }
 
 fn local_database_url() -> Result<(String, &'static str), String> {
@@ -120,21 +114,72 @@ fn parse_http_port() -> Result<u16, String> {
     }
 }
 
-fn parse_bool_env(name: &str) -> Result<bool, String> {
-    match non_empty_env(name).as_deref() {
-        Some("1" | "true" | "TRUE" | "yes" | "YES") => Ok(true),
-        Some("0" | "false" | "FALSE" | "no" | "NO") | None => Ok(false),
-        Some(_) => Err(format!("{name} must be true or false")),
+fn read_dropbox_config() -> Result<Option<DropboxConfig>, String> {
+    if !env_flag("SCARGO_DROPBOX_ENABLED") {
+        return Ok(None);
+    }
+
+    Ok(Some(DropboxConfig {
+        app_key: required_env("DROPBOX_APP_KEY")?,
+        app_secret: required_env("DROPBOX_APP_SECRET")?,
+        base_url: normalize_base_url(&required_env("SCARGO_BASE_URL")?)?,
+        token_encryption_key: parse_encryption_key(&required_env("SCARGO_TOKEN_ENCRYPTION_KEY")?)?,
+        poll_sec: parse_dropbox_poll_sec()?,
+        root_path: DEFAULT_DROPBOX_ROOT_PATH,
+    }))
+}
+
+fn parse_dropbox_poll_sec() -> Result<u64, String> {
+    match non_empty_env("SCARGO_DROPBOX_POLL_SEC") {
+        Some(value) => value
+            .parse()
+            .map_err(|_| "SCARGO_DROPBOX_POLL_SEC must be a positive integer".into()),
+        None => Ok(DEFAULT_DROPBOX_POLL_SEC),
     }
 }
 
-fn parse_u64_env(name: &str) -> Result<u64, String> {
-    match non_empty_env(name) {
-        Some(value) => value
-            .parse()
-            .map_err(|_| format!("{name} must be a positive integer")),
-        None => Ok(3600),
+fn normalize_base_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() || !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err("SCARGO_BASE_URL must start with http:// or https://".into());
     }
+    Ok(trimmed.to_string())
+}
+
+fn parse_encryption_key(value: &str) -> Result<[u8; 32], String> {
+    decode_hex(value.trim())?
+        .try_into()
+        .map_err(|_| "SCARGO_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes of hex".into())
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
+    if !value.len().is_multiple_of(2) || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("SCARGO_TOKEN_ENCRYPTION_KEY must be hex".into());
+    }
+    value
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            std::str::from_utf8(chunk)
+                .ok()
+                .and_then(|s| u8::from_str_radix(s, 16).ok())
+                .ok_or_else(|| "SCARGO_TOKEN_ENCRYPTION_KEY must be valid hex".to_string())
+        })
+        .collect()
+}
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        non_empty_env(name)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+fn required_env(name: &str) -> Result<String, String> {
+    non_empty_env(name)
+        .ok_or_else(|| format!("{name} is required when SCARGO_DROPBOX_ENABLED=true"))
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -204,31 +249,36 @@ mod tests {
     }
 
     #[test]
-    fn dev_generates_password_database_url() {
+    fn dropbox_disabled_by_default() {
         let _guard = env_lock().lock().unwrap();
-        without_env("SCARGO_DATABASE_URL", || {
-            with_env("POSTGRES_HOST", "localhost", || {
-                with_env("POSTGRES_PORT", "6543", || {
-                    with_env("POSTGRES_USER", "scargo", || {
-                        with_env("POSTGRES_PASSWORD", "secret", || {
-                            with_env("POSTGRES_DB", "scargo_test", || {
-                                let (url, source) = resolve_database_url("dev").unwrap();
-                                let expected = [
-                                    "postgres://",
-                                    "scargo",
-                                    ":",
-                                    "secret",
-                                    "@localhost:6543/scargo_test",
-                                ]
-                                .concat();
-                                assert_eq!(url, expected);
-                                assert_eq!(source, "local default");
-                            });
-                        });
-                    });
-                });
-            });
+        without_env("SCARGO_DROPBOX_ENABLED", || {
+            assert!(read_dropbox_config().unwrap().is_none());
         });
+    }
+
+    #[test]
+    fn dropbox_enabled_requires_required_values() {
+        let _guard = env_lock().lock().unwrap();
+        with_env("SCARGO_DROPBOX_ENABLED", "true", || {
+            let err = read_dropbox_config().unwrap_err();
+            assert!(err.contains("DROPBOX_APP_KEY"));
+        });
+    }
+
+    #[test]
+    fn parses_hex_encryption_key() {
+        let bytes = parse_encryption_key(
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        )
+        .unwrap();
+        assert_eq!(bytes[0], 0);
+        assert_eq!(bytes[31], 31);
+    }
+
+    #[test]
+    fn rejects_short_encryption_key() {
+        let err = parse_encryption_key("abcd").unwrap_err();
+        assert!(err.contains("32 bytes"));
     }
 
     fn env_lock() -> &'static Mutex<()> {

@@ -69,11 +69,7 @@
     gap: 1rem;
   }
 
-  .brand {
-    display: grid;
-    padding: 0.25rem 0 0.9rem;
-  }
-
+  .brand { display: grid; padding: 0.25rem 0 0.9rem; }
   .brand img {
     width: min(238px, 100%);
     height: auto;
@@ -81,11 +77,7 @@
     border-radius: 8px;
   }
 
-  .nav-list {
-    display: grid;
-    gap: 0.35rem;
-  }
-
+  .nav-list { display: grid; gap: 0.35rem; }
   .nav-item {
     border: 1px solid transparent;
     border-radius: 8px;
@@ -116,7 +108,6 @@
 
   .nav-icon.circle { border-radius: 50%; }
   .nav-icon.line { border-width: 0 0 2px 0; border-radius: 0; }
-
   .sidebar-spacer { flex: 1; }
 
   .profile-card,
@@ -128,8 +119,8 @@
     box-shadow: 0 12px 26px var(--shadow);
   }
 
-  .profile-card { display: grid; gap: 0.25rem; }
-  .hint-card { display: grid; gap: 0.45rem; }
+  .profile-card,
+  .hint-card { display: grid; gap: 0.35rem; }
 
   .profile-label,
   .eyebrow,
@@ -179,8 +170,7 @@
   }
 
   .top-actions,
-  .account-actions,
-  .source-actions {
+  .account-actions {
     display: flex;
     gap: 0.55rem;
     flex-wrap: wrap;
@@ -248,10 +238,7 @@
   }
 
   .account-meta,
-  .source-card {
-    display: grid;
-    gap: 0.8rem;
-  }
+  .source-card { display: grid; gap: 0.8rem; }
 
   .intro-card {
     display: grid;
@@ -276,16 +263,12 @@
 
   .source-grid {
     display: grid;
-    grid-template-columns: minmax(260px, 1.6fr) repeat(4, auto);
+    grid-template-columns: minmax(260px, 1.6fr) repeat(5, auto);
     gap: 0.75rem;
     align-items: end;
   }
 
-  .field {
-    display: grid;
-    gap: 0.35rem;
-  }
-
+  .field { display: grid; gap: 0.35rem; }
   .field label {
     color: var(--muted);
     font-size: 0.74rem;
@@ -304,21 +287,21 @@
     padding: 0.48rem 0.65rem;
   }
 
-  #shared-link-status,
+  #dropbox-status,
   #page-status {
     min-height: 1.5rem;
     color: var(--muted);
     font-size: 0.92rem;
   }
 
-  #shared-link-status.ok,
+  #dropbox-status.ok,
   #page-status.ok { color: var(--green); }
-  #shared-link-status.err,
+  #dropbox-status.err,
   #page-status.err { color: var(--red); }
 
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.85rem;
   }
 
@@ -382,17 +365,17 @@
       <div class="profile-value" id="profile-user-key">Checking...</div>
     </div>
     <div class="hint-card">
-      <div class="profile-label">Shared folder rule</div>
-      <div class="hint-copy">Use a narrow Dropbox `CsvLogs` folder. Anyone with the link can read it outside Scargo.</div>
+      <div class="profile-label">App access</div>
+      <div class="hint-copy">Scargo uses Dropbox OAuth with offline access and Full Dropbox visibility, but only reads files under the selected root folder.</div>
     </div>
   </aside>
 
   <main class="content">
     <div class="topbar">
       <div>
-        <div class="eyebrow">Shared-link ingest</div>
-        <h1>Manage the Dropbox source Scargo polls for this account.</h1>
-        <p class="subhead">Scargo ingests direct CSV children under `<vehicle-key>/<file>.csv`, tries exact-prefix VIN inference from known metadata first, then falls back to NHTSA vPIC for exact VIN folders.</p>
+        <div class="eyebrow">Dropbox OAuth ingest</div>
+        <h1>Manage the Dropbox account Scargo polls for this account.</h1>
+        <p class="subhead">Scargo lists Dropbox changes incrementally, downloads only new or changed CSV revisions under the selected root, ingests them directly into the database, and does not retain CSV or ZIP files on disk.</p>
       </div>
       <div class="top-actions">
         <button class="ghost-button" type="button" id="theme-toggle">Light mode</button>
@@ -404,7 +387,7 @@
       <div class="account-meta">
         <div class="profile-label">Signed-in account</div>
         <div id="account-status" role="status" aria-live="polite">Checking session...</div>
-        <div class="account-note">Guests and bearer upload tokens cannot manage shared-link sources.</div>
+        <div class="account-note">Guests and bearer upload tokens cannot manage Dropbox connections.</div>
       </div>
       <div class="account-actions">
         <button class="ghost-button" type="button" id="refresh-btn">Refresh</button>
@@ -414,46 +397,52 @@
 
     <section class="intro-card" aria-label="Dropbox rules">
       <article class="intro-panel">
-        <div class="card-label">Link format</div>
-        <strong>Modern Dropbox URLs supported</strong>
-        <p>Scargo accepts legacy shared links and current `/scl/fo/...` folder links, preserving required access params while forcing direct download mode.</p>
+        <div class="card-label">Connect once</div>
+        <strong>Offline OAuth refresh</strong>
+        <p>Scargo stores an encrypted Dropbox refresh token so the server can poll for new CSVs while you keep driving.</p>
       </article>
       <article class="intro-panel">
-        <div class="card-label">VIN metadata</div>
-        <strong>Known VINs first</strong>
-        <p>Exact 17-character VIN folders first try a unique match from existing VIN patterns. If no unique match exists, Scargo uses NHTSA vPIC.</p>
+        <div class="card-label">Selected root</div>
+        <strong>One watched folder</strong>
+        <p>The worker lists Dropbox changes under one selected root path per account and ingests only direct `<vehicle-key>/<file>.csv` children.</p>
       </article>
       <article class="intro-panel">
-        <div class="card-label">v1 archive contract</div>
-        <strong>One folder level</strong>
-        <p>Root CSVs are recorded as skipped, nested CSVs below the vehicle folder are skipped, and unchanged file hashes stay out of the ingest path.</p>
+        <div class="card-label">No file retention</div>
+        <strong>Database only</strong>
+        <p>CSV bytes stream from Dropbox into ingest and are not kept as local CSV or ZIP artifacts after processing.</p>
       </article>
     </section>
 
-    <section class="source-card" aria-label="Shared-link source">
+    <section class="source-card" aria-label="Dropbox source">
       <div class="source-head">
         <div>
-          <div class="profile-label">Dropbox shared folder</div>
-          <div class="source-copy">Saved links are encrypted at rest and never rendered back in full after save.</div>
+          <div class="profile-label">Dropbox connection</div>
+          <div class="source-copy">Use a narrow root such as `/OBD Fusion/CsvLogs`. Full Dropbox visibility is granted to the app, but Scargo reads only the selected root.</div>
         </div>
         <div id="page-status" role="status" aria-live="polite"></div>
       </div>
       <div class="source-grid">
         <div class="field">
-          <label for="shared-link-input">Shared folder URL</label>
-          <input id="shared-link-input" type="url" autocomplete="off" placeholder="https://www.dropbox.com/scl/fo/...">
+          <label for="dropbox-root-input">Dropbox root folder</label>
+          <input id="dropbox-root-input" type="text" autocomplete="off" placeholder="/OBD Fusion/CsvLogs">
         </div>
-        <button id="shared-link-save-btn" class="primary-button" type="button">Save</button>
-        <button id="shared-link-pause-btn" type="button">Pause</button>
-        <button id="shared-link-sync-btn" type="button">Sync now</button>
-        <button id="shared-link-delete-btn" class="danger-button" type="button">Delete</button>
+        <button id="dropbox-connect-btn" class="primary-button" type="button">Connect Dropbox</button>
+        <button id="dropbox-save-btn" class="primary-button" type="button">Save folder</button>
+        <button id="dropbox-pause-btn" type="button">Pause</button>
+        <button id="dropbox-sync-btn" type="button">Sync now</button>
+        <button id="dropbox-delete-btn" class="danger-button" type="button">Disconnect</button>
       </div>
-      <div id="shared-link-status" role="status" aria-live="polite">Checking source...</div>
-      <div class="stats-grid" aria-label="Shared-link status">
+      <div id="dropbox-status" role="status" aria-live="polite">Checking source...</div>
+      <div class="stats-grid" aria-label="Dropbox status">
         <article>
-          <div class="card-label">Saved link</div>
-          <div class="stat-value" id="saved-link-label">Not saved</div>
-          <div class="stat-copy">Redacted label only</div>
+          <div class="card-label">Selected root</div>
+          <div class="stat-value" id="saved-root-label">/OBD Fusion/CsvLogs</div>
+          <div class="stat-copy">Tracked Dropbox folder</div>
+        </article>
+        <article>
+          <div class="card-label">Sync state</div>
+          <div class="stat-value" id="sync-state">idle</div>
+          <div class="stat-copy">Background worker state</div>
         </article>
         <article>
           <div class="card-label">Last sync</div>
@@ -463,12 +452,12 @@
         <article>
           <div class="card-label">Last success</div>
           <div class="stat-value" id="last-success-at">Never</div>
-          <div class="stat-copy">Latest successful archive pass</div>
+          <div class="stat-copy">Latest successful ingest pass</div>
         </article>
         <article>
           <div class="card-label">File counts</div>
-          <div class="stat-value" id="file-counts">0 / 0 / 0</div>
-          <div class="stat-copy">Ingested / duplicate / skipped</div>
+          <div class="stat-value" id="file-counts">0 / 0</div>
+          <div class="stat-copy">Ingested / duplicate</div>
         </article>
       </div>
     </section>

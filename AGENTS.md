@@ -30,8 +30,8 @@ scargo/
 │       ├── auth.js    # Auth-page logic — /api/auth/* + explicit guest consent
 │       ├── index.html  # Dashboard SPA (Chart.js from CDN)
 │       ├── app.js      # Dashboard logic — fetches /api/analysis/dashboard
-│       ├── dropbox.html # Dedicated shared-link ingest management page
-│       ├── dropbox.js   # Dropbox-page logic — /api/ingest-sources/shared-link
+│       ├── dropbox.html # Dedicated Dropbox OAuth ingest management page
+│       ├── dropbox.js   # Dropbox-page logic — /api/dropbox/*
 │       ├── vehicles.html # Dedicated vehicle-management page
 │       └── vehicles.js   # Vehicle-management page logic
 ├── src/
@@ -56,7 +56,7 @@ scargo/
 │       ├── channels.rs # GET  /api/channels — dashboard channel registry
 │       ├── cohort.rs   # GET  /api/analysis/cohort/{channel} — aggregate comparisons
 │       ├── ingest.rs   # POST /api/ingest/csv?vin=VIN — upload CSV file
-│       ├── shared_link_ingest.rs # Shared Dropbox link source API + poll worker
+│       ├── dropbox.rs  # Dropbox OAuth APIs for connect/callback/manage routes
 │       ├── dashboard.rs # GET  /api/analysis/dashboard — batched dashboard series
 │       ├── trends.rs   # GET  /api/analysis/trends/{channel} — raw time series
 │       ├── summary.rs  # GET  /api/analysis/summary/{channel} — time_bucket aggregates
@@ -64,8 +64,9 @@ scargo/
 │       ├── pairs.rs    # GET  /api/analysis/pairs — numeric X/Y metric pairs
 │       ├── privacy.rs  # Account/session/token resolution and ownership checks
 │       └── vehicles.rs # GET  /api/vehicles — list account-owned vehicles
+├── src/dropbox_worker.rs # Dropbox cursor poller + per-file download ingest worker
 ├── todo/
-│   ├── shared-link-ingest/ # Planned headless shared-link ingest replacement
+│   ├── shared-link-ingest/ # Plan folder now tracks Dropbox OAuth incremental ingest
 │   └── completed/      # Completed plan folders after review and merge
 ├── scripts/
 │   ├── analyze-telemetry.py # One-time trend/relationship report (daily by default, raw opt-in)
@@ -107,12 +108,13 @@ and `POSTGRES_DB` when `SCARGO_DATABASE_URL` is unset. `SCARGO_ENV=production`
 requires an explicit `SCARGO_DATABASE_URL`.
 Local database connections use plain PostgreSQL on localhost or the Compose
 network. Add TLS only when a production database requires it.
-Dropbox OAuth ingest was removed because OBD Fusion writes to its own Dropbox
-app folder and Scargo app-folder OAuth cannot read that folder without Full
-Dropbox access. The replacement direction is planned in
-`todo/shared-link-ingest/PLAN.md`: one encrypted Dropbox shared folder link per
-Scargo account, with server-side polling and NHTSA VIN cache support for exact
-17-character VIN folder names.
+Dropbox ingest uses Full Dropbox OAuth because OBD Fusion writes to its own
+Dropbox app folder. Configure `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`,
+`SCARGO_BASE_URL`, `SCARGO_TOKEN_ENCRYPTION_KEY`, and
+`SCARGO_DROPBOX_ENABLED=true` to enable per-account server-side polling. Scargo
+stores encrypted refresh tokens plus Dropbox cursors, downloads only new CSV
+revisions from the selected folder, and does not retain CSV or ZIP artifacts
+outside the database.
 
 ### Build & run
 ```bash
@@ -150,8 +152,9 @@ Core tables:
 | `ingest_upload` (table) | Vehicle+content hash de-duplication plus approval timestamps for public exact-VIN and cohort sharing |
 | `account_vehicle_profile` (table) | Per-account default sharing preference for a vehicle's exact-VIN public stats |
 | `account_vehicle_upload` (table) | Per-account link to uploads, including private-access state and exact-VIN sharing flag |
-| `shared_ingest_source` (table) | One encrypted shared Dropbox folder URL per account plus poll state |
-| `shared_ingest_file` (table) | Per-source file ledger keyed by archive path and content hash |
+| `dropbox_connection` (table) | One encrypted Dropbox refresh token, root path, cursor, and sync state per account |
+| `dropbox_oauth_state` (table) | Short-lived hashed Dropbox OAuth state rows during browser redirect flow |
+| `dropbox_ingest_file` (table) | Per-connection Dropbox file ledger keyed by path and revision |
 | `vin_decode_cache` (table) | Cached exact-VIN NHTSA vPIC metadata and retry state |
 | `obd2_metric` (table) | Global metric registry: one row per key with label, unit, and strict `value_kind` |
 | `obd2_metric_reading` (table) | Time-series raw metric values: upload_id, time, vehicle_id, metric_id, and exactly one payload column (`value` or `text_value`) |
@@ -187,9 +190,13 @@ time indexes.
 | GET | `/api/auth/me` | Current account or dev/test guest fallback, plus `capabilities.approve_pending_public_stats` |
 | POST | `/api/auth/tokens` | Create an upload API token for the logged-in account |
 | POST | `/api/ingest/csv?vin=VIN` | Upload live OBD CSV export body → `{"rows_ingested": N}` or `400` on metric value-kind conflict |
-| GET/PUT/DELETE | `/api/ingest-sources/shared-link` | Inspect, save/replace, or remove one signed-in account Dropbox shared folder source |
-| POST | `/api/ingest-sources/shared-link/pause` | Pause or resume the current account's shared-link source |
-| POST | `/api/ingest-sources/shared-link/sync-now` | Run one server-side shared-link sync for the current account |
+| POST | `/api/dropbox/oauth/start` | Start Dropbox OAuth for the current signed-in non-guest account |
+| GET | `/api/dropbox/oauth/callback` | Finish Dropbox OAuth and store the encrypted refresh token |
+| GET | `/api/dropbox/connection` | Inspect the current account Dropbox connection, folder, sync state, counts, and latest error |
+| POST | `/api/dropbox/connection/folder` | Update the monitored Dropbox root folder |
+| POST | `/api/dropbox/connection/pause` | Pause or resume the current account Dropbox connection |
+| POST | `/api/dropbox/connection/sync-now` | Queue one immediate Dropbox sync for the current account |
+| DELETE | `/api/dropbox/connection` | Remove the current Dropbox connection without deleting telemetry |
 | GET | `/api/analysis/dashboard` | Batched dashboard series. Query: `?view=summary`, `?limit=N`, `?channel_limit=N`, `?vehicle_id=UUID`, `?start=...`, `?end=...`, `?bucket=1d|1w|1mon`, `?channels=key1,key2` |
 | GET | `/api/analysis/pairs` | Owner-scoped exact-time numeric metric pairs. Query: `?x=key1&y=key2`, optional `vehicle_id`, `start`, `end`, `limit` |
 | GET | `/api/analysis/trends/{channel}` | Raw time series. Query: `?limit=N`, `?vehicle_id=UUID` |
@@ -269,19 +276,18 @@ It resolves `--api-token`/`SCARGO_API_TOKEN` before loading when tokens already
 exist, otherwise dev/test rebuilds use the guest account. It continues past bad
 CSVs, prints a failure summary, and exits non-zero if any file failed.
 
-Deployed Dropbox ingestion uses one saved shared folder link per signed-in
-non-guest account. Users manage that source on `/dropbox.html`. Set
-`SCARGO_SHARED_LINK_INGEST=true` to enable the background poller and
-`SCARGO_SHARED_LINK_POLL_SECONDS` for its interval. Shared-link sync downloads
-the folder archive server-side, accepts only direct
-`<vehicle-key>/<file>.csv` children, records root or nested CSV skips in
-`shared_ingest_file`, skips already ingested path+hash rows, and calls the same
-account-scoped CSV helper as manual uploads. Exact 17-character VIN folder names
-first try a unique VIN-pattern match from existing metadata, then use the cached
-NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never trigger
-runtime metadata lookup. The full shared URL is not returned to the browser
-after save. Users should share a narrow OBD Fusion `CsvLogs` folder and revoke
-the link in Dropbox to cut external access.
+Deployed Dropbox ingestion uses one saved OAuth connection per signed-in
+non-guest account. Users manage that connection on `/dropbox.html`. Set
+`SCARGO_DROPBOX_ENABLED=true` to enable the background poller and
+`SCARGO_DROPBOX_POLL_SEC` for its interval. Dropbox sync uses
+`files/list_folder` cursors, accepts only direct `<vehicle-key>/<file>.csv`
+children under the selected root, records root or nested CSV skips in
+`dropbox_ingest_file`, skips already ingested path+revision rows, and calls the
+same account-scoped CSV helper as manual uploads. Exact 17-character VIN folder
+names first try a unique VIN-pattern match from existing metadata, then use the
+cached NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never
+trigger runtime metadata lookup. Refresh tokens are encrypted at rest and CSV
+bytes are discarded after ingest completes.
 
 Incremental drop-folder uploads still use `scripts/scan-and-ingest.py`. The
 watcher records successful vehicle-key+SHA-256 uploads in
@@ -452,9 +458,12 @@ reason to roll them up or expose aggregate cohorts.
 | `SCARGO_HTTP_PORT` | `8080` | Bind port |
 | `SCARGO_ENABLE_GUEST` | dev/test enabled, production disabled | Enable or disable unauthenticated guest fallback |
 | `SCARGO_API_TOKEN` | unset | Upload token for watcher and direct bulk ingest |
-| `SCARGO_SHARED_LINK_INGEST` | `false` | Enable background polling for saved shared Dropbox links |
-| `SCARGO_SHARED_LINK_POLL_SECONDS` | `3600` | Poll interval for active shared-link sources |
-| `SCARGO_SHARED_LINK_SECRET` | dev placeholder | AES-GCM secret for stored shared links; required in production |
+| `SCARGO_DROPBOX_ENABLED` | `false` | Enable Dropbox OAuth ingest and background polling |
+| `DROPBOX_APP_KEY` | unset | Dropbox OAuth app key; required when Dropbox ingest is enabled |
+| `DROPBOX_APP_SECRET` | unset | Dropbox OAuth app secret; required when Dropbox ingest is enabled |
+| `SCARGO_BASE_URL` | unset | Public app base URL used to build the Dropbox callback URL |
+| `SCARGO_TOKEN_ENCRYPTION_KEY` | unset | 32-byte hex AES-GCM key for stored Dropbox refresh tokens |
+| `SCARGO_DROPBOX_POLL_SEC` | `3600` | Poll interval for active Dropbox connections |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
 | `POSTGRES_PORT` | `5432` | Dev-mode local database port when URL is unset |
 | `POSTGRES_USER` | `scargo` | Dev-mode local database user when URL is unset |
