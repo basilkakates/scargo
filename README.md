@@ -89,6 +89,8 @@ polls active connections, treats each direct child folder as the VIN or vehicle
 key, and ingests only `CsvLogs/<VIN>/*.csv` files for that account. Root-level
 CSV files are skipped and recorded in connection/file status because they do not
 identify a vehicle.
+See [docs/dropbox-ingest.md](docs/dropbox-ingest.md) for Dropbox app setup,
+redirect URI, folder layout, smoke checks, and deployment notes.
 
 ## Features
 
@@ -209,6 +211,11 @@ Signed-in non-guest users can also manage Dropbox ingest from the dashboard:
 connect OAuth, pause or resume polling, run one sync pass, disconnect, and view
 the fixed ingest folder plus last sync, success, ingest, duplicate, and latest
 error status. Guest users do not see Dropbox controls.
+Dropbox OAuth uses the redirect URI
+`${SCARGO_BASE_URL}/api/dropbox/oauth/callback`, requests offline token access,
+and stores encrypted token material, cursors, and per-file sync state in the
+database. Keep that database storage persistent and backed up in any deployment
+with Dropbox enabled.
 It also returns each metric's `category`, `sensitivity`, `rollup`,
 `public_cohort`, and `derived_preferred` policy fields. New ingest writes raw
 metrics and incrementally maintains a durable `vehicle_metric_day` rollup only
@@ -337,6 +344,12 @@ Use `--timeout-sec N` to cap how long one HTTP upload can block shutdown.
 For direct DB bulk loads, `--api-token TOKEN` resolves the account before
 loading. A destructive `--rebuild-db` drops token rows, so local rebuild smoke
 flows use the guest account unless a follow-up account/token is created.
+
+Dropbox ingest follows the same parser and duplicate protections without using
+the local watcher. It lists `/OBD Fusion/CsvLogs`, treats each direct child
+folder as the VIN or vehicle key, ingests only direct CSV children, skips
+root-level and nested CSV files with visible status, and leaves Dropbox files in
+place.
 
 TimescaleDB stores raw metric readings in a hypertable. Compression policy and
 an hourly continuous aggregate are configured during runtime bootstrap and after

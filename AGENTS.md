@@ -23,7 +23,8 @@ scargo/
 ├── compose.yaml        # Local TimescaleDB/PostgreSQL service
 ├── docs/
 │   ├── privacy-model.md # Privacy, ownership, comparison, and cost scaling model
-│   └── metric-policy.md # Metric categories, privacy, rollup/public policy
+│   ├── metric-policy.md # Metric categories, privacy, rollup/public policy
+│   └── dropbox-ingest.md # Dropbox app setup, folder layout, and ops checks
 ├── dashboard/
 │   └── static/
 │       ├── auth.html  # Dedicated login/create-account page for dashboard entry
@@ -34,6 +35,7 @@ scargo/
 │       └── vehicles.js   # Vehicle-management page logic
 ├── src/
 │   ├── main.rs         # Entry point: init tracing, config, pool, migrate, start server
+│   ├── dropbox_worker.rs # Background Dropbox list/download/ingest worker
 │   ├── config/
 │   │   ├── mod.rs      # Re-exports Settings, Error, Result
 │   │   ├── error.rs    # Error enum (Internal, NotFound, BadRequest, Unauthorized, Database, CsvParse)
@@ -115,7 +117,12 @@ under that root as the VIN or vehicle key, and ingests only
 with a visible status error because no VIN folder exists.
 Signed-in dashboard users can connect Dropbox, pause or resume polling, run a
 manual sync pass, disconnect, and view folder/status/count/error metadata from
-the dashboard. Guest users cannot manage Dropbox connections.
+the dashboard. Guest users cannot manage Dropbox connections. The Dropbox OAuth
+redirect URI is `${SCARGO_BASE_URL}/api/dropbox/oauth/callback`; the worker uses
+offline token access, persists cursors and per-file state in the database, skips
+root-level and nested CSV files, and never moves or archives remote files in v1.
+Deployments with Dropbox enabled need persistent database storage and backups for
+encrypted tokens, cursors, and file de-duplication state.
 
 ### Build & run
 ```bash
