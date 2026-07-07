@@ -122,7 +122,8 @@ username/password credentials before entering `/`. The browser uses an HttpOnly
 session cookie, while scripts and external upload tools use generated
 `Authorization: Bearer` upload tokens. Successful registration still returns the
 first upload token; the auth page stores it in browser session storage and the
-dashboard shows it once after redirect. Dev/test mode still exposes the
+dashboard shows it once after redirect. Signed-in users manage shared Dropbox
+ingest on `/dropbox.html`. Dev/test mode still exposes the
 deterministic guest account, but the browser must explicitly choose `Continue as
 guest` on `/auth.html`; set `SCARGO_ENV=production` or
 `SCARGO_ENABLE_GUEST=false` to disable that fallback. Raw vehicle reads are
@@ -220,14 +221,15 @@ Duplicate headers are retained with stable suffixes such as
 `intake_manifold_absolute_pressure` and `intake_manifold_absolute_pressure_2`.
 
 Signed-in non-guest dashboard sessions can manage one shared Dropbox folder
-source at `/api/ingest-sources/shared-link`. `GET` returns redacted source
-status and counts. `PUT` saves or replaces the URL. `DELETE` removes the source
-without deleting telemetry. `POST /pause` toggles active/paused, and
-`POST /sync-now` runs one server-side sync. Bearer upload tokens and guests
-cannot manage shared links. The shared folder archive contract is
-`<vehicle-key>/<file>.csv`; root-level CSV files are recorded as skipped,
-nested CSVs are skipped for v1, and non-CSV files are ignored. Exact
-17-character VIN folders trigger a cached NHTSA vPIC lookup during sync.
+source on `/dropbox.html` through `/api/ingest-sources/shared-link`. `GET`
+returns redacted source status and counts. `PUT` saves or replaces the URL.
+`DELETE` removes the source without deleting telemetry. `POST /pause` toggles
+active/paused, and `POST /sync-now` runs one server-side sync. Bearer upload
+tokens and guests cannot manage shared links. The shared folder archive
+contract is `<vehicle-key>/<file>.csv`; root-level CSV files are recorded as
+skipped, nested CSVs are skipped for v1, and non-CSV files are ignored. Exact
+17-character VIN folders first try a unique existing VIN-pattern match from
+known metadata, then fall back to a cached NHTSA vPIC lookup during sync.
 
 Anyone with the Dropbox shared link can read the shared folder outside Scargo.
 Share a narrow OBD Fusion `CsvLogs` folder, and revoke that link in Dropbox to

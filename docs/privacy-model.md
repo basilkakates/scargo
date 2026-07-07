@@ -39,11 +39,12 @@ On CSV ingest, Scargo:
 6. Stores raw readings and daily rollups keyed by `upload_id`, vehicle id, channel, and time.
 
 Shared-link ingest uses the same account-scoped CSV helper. Managing a shared
-link requires an HttpOnly dashboard session for a signed-in non-guest user;
-bearer upload tokens and guests cannot create, inspect, pause, sync, or delete
-shared-link sources. The API returns only a redacted label and sync counts, not
-the stored Dropbox URL. Deleting a source removes the URL and file ledger while
-leaving already ingested telemetry and public approval state intact.
+link on `/dropbox.html` requires an HttpOnly dashboard session for a signed-in
+non-guest user; bearer upload tokens and guests cannot create, inspect, pause,
+sync, or delete shared-link sources. The API returns only a redacted label and
+sync counts, not the stored Dropbox URL. Deleting a source removes the URL and
+file ledger while leaving already ingested telemetry and public approval state
+intact.
 
 Read APIs for vehicles, latest readings, dashboard series, trends, and summaries
 are scoped to the request account through uploads whose
@@ -106,9 +107,10 @@ volume grows.
 - Keep raw telemetry compressed for recent detail only; retain durable daily
   rollups for long-term owner views and public cohorts, limited to metric-policy
   allowlisted vehicle channels.
-- Keep future-VIN inference offline. Shared-link sync may fetch exact
-  17-character VIN folder metadata from NHTSA vPIC into `vin_decode_cache`, but
-  it does not guess metadata for non-VIN vehicle keys.
+- Keep VIN inference conservative. Shared-link sync may reuse a unique exact
+  VIN-pattern match from known metadata for exact 17-character VIN folders, then
+  fetch from NHTSA vPIC into `vin_decode_cache` when no unique match exists. It
+  does not guess metadata for non-VIN vehicle keys.
 - Move heavy ingest, simulation, and cohort calculations to async jobs only when
   request latency or database load requires it.
 - Use discovered correlations to reduce future client uploads to the smallest

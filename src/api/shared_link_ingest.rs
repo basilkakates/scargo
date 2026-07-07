@@ -1,5 +1,6 @@
 use crate::config::Settings;
 use crate::db::Database;
+use crate::ingest::vin;
 use crate::Error;
 use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse};
 use aes_gcm::aead::{Aead, KeyInit};
@@ -7,8 +8,9 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use chrono::{DateTime, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
@@ -284,13 +286,15 @@ async fn sync_archive(
             continue;
         };
         let hash = super::ingest::packet_hash(&body);
+        maybe_fetch_vin_metadata(db, &vehicle_key).await?;
+        apply_cached_vehicle_metadata(db, &vehicle_key).await?;
         if already_ingested(db, source_id, &path, &hash).await? {
             continue;
         }
-        maybe_fetch_vin_metadata(db, &vehicle_key).await?;
         let result =
             super::ingest::ingest_csv_for_account(db, account_id, &vehicle_key, &body, "text/csv")
                 .await?;
+        apply_cached_vehicle_metadata(db, &vehicle_key).await?;
         record_file(
             db,
             source_id,
@@ -433,63 +437,41 @@ async fn maybe_fetch_vin_metadata(db: &Database, vehicle_key: &str) -> Result<()
     let client = db.get().await?;
     let cached = client
         .query_opt(
-            "SELECT status FROM vin_decode_cache
-             WHERE vin = $1 AND (status = 'ok' OR next_retry_at > NOW())",
+            "SELECT status, next_retry_at FROM vin_decode_cache
+             WHERE vin = $1",
             &[&vin],
         )
         .await
         .map_err(|_| Error::Database)?;
     drop(client);
-    if cached.is_some() {
+
+    if let Some(row) = cached.as_ref() {
+        let status: String = row.get(0);
+        if status == "ok" {
+            return Ok(());
+        }
+    }
+
+    if let Some(meta) = infer_vin_metadata(db, &vin).await? {
+        persist_vin_metadata(db, &vin, &meta).await?;
         return Ok(());
     }
+
+    if let Some(row) = cached {
+        let next_retry_at: Option<DateTime<Utc>> = row.get(1);
+        if next_retry_at.is_some_and(|value| value > Utc::now()) {
+            return Ok(());
+        }
+    }
+
     let metadata = fetch_vpic(&vin).await;
-    let client = db.get().await?;
     match metadata {
         Ok(meta) => {
-            client
-                .execute(
-                    "INSERT INTO vin_decode_cache
-                        (vin, status, year, make, model, engine_family, raw_response, fetched_at, latest_error)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), '')
-                     ON CONFLICT (vin) DO UPDATE SET
-                        status = EXCLUDED.status,
-                        year = EXCLUDED.year,
-                        make = EXCLUDED.make,
-                        model = EXCLUDED.model,
-                        engine_family = EXCLUDED.engine_family,
-                        raw_response = EXCLUDED.raw_response,
-                        fetched_at = NOW(),
-                        next_retry_at = NULL,
-                        latest_error = ''",
-                    &[
-                        &vin,
-                        &meta.status,
-                        &meta.year,
-                        &meta.make,
-                        &meta.model,
-                        &meta.engine_family,
-                        &meta.raw,
-                    ],
-                )
-                .await
-                .map_err(|_| Error::Database)?;
-            client
-                .execute(
-                    "UPDATE vehicle
-                     SET make = CASE WHEN make = '' THEN $2 ELSE make END,
-                         model = CASE WHEN model = '' THEN $3 ELSE model END,
-                         engine_family = CASE WHEN engine_family = '' THEN $4 ELSE engine_family END,
-                         year = CASE WHEN year = 0 THEN $5 ELSE year END,
-                         updated_at = NOW()
-                     WHERE vin = $1",
-                    &[&vin, &meta.make, &meta.model, &meta.engine_family, &meta.year],
-                )
-                .await
-                .map_err(|_| Error::Database)?;
+            persist_vin_metadata(db, &vin, &meta).await?;
         }
         Err(err) => {
             let message = err.to_string();
+            let client = db.get().await?;
             client
                 .execute(
                     "INSERT INTO vin_decode_cache
@@ -514,6 +496,7 @@ struct VpicMetadata {
     make: String,
     model: String,
     engine_family: String,
+    source: String,
     raw: String,
 }
 
@@ -549,8 +532,186 @@ async fn fetch_vpic(vin: &str) -> Result<VpicMetadata, Error> {
         make,
         model,
         engine_family,
+        source: "vpic".into(),
         raw: value.to_string(),
     })
+}
+
+async fn infer_vin_metadata(db: &Database, vin_value: &str) -> Result<Option<VpicMetadata>, Error> {
+    let year = vin::decode(vin_value).year;
+    let Some(key) = pattern_key(vin_value, year) else {
+        return Ok(None);
+    };
+    let client = db.get().await?;
+    let cache_rows = client
+        .query(
+            "SELECT vin, year, make, model, engine_family
+             FROM vin_decode_cache
+             WHERE status = 'ok'
+               AND year > 0
+               AND make <> ''
+               AND model <> ''
+               AND engine_family <> ''
+               AND char_length(vin) = 17",
+            &[],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    let vehicle_rows = client
+        .query(
+            "SELECT vin, year, make, model, engine_family
+             FROM vehicle
+             WHERE year > 0
+               AND make <> ''
+               AND model <> ''
+               AND engine_family <> ''
+               AND char_length(vin) = 17",
+            &[],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    drop(client);
+
+    let mut matches = HashMap::new();
+    for row in cache_rows.iter().chain(vehicle_rows.iter()) {
+        let candidate_vin: String = row.get(0);
+        let candidate_year: i32 = row.get(1);
+        let candidate = InferenceCandidate {
+            make: row.get(2),
+            model: row.get(3),
+            engine_family: row.get(4),
+        };
+        if pattern_key(&candidate_vin, candidate_year).as_deref() != Some(key.as_str()) {
+            continue;
+        }
+        if !candidate.is_complete() {
+            continue;
+        }
+        matches.entry(candidate.dedupe_key()).or_insert(candidate);
+    }
+
+    if matches.len() != 1 {
+        return Ok(None);
+    }
+
+    let candidate = matches.into_values().next().unwrap();
+    Ok(Some(VpicMetadata {
+        status: "ok".into(),
+        year,
+        make: candidate.make,
+        model: candidate.model,
+        engine_family: candidate.engine_family,
+        source: "inferred".into(),
+        raw: json!({ "pattern_key": key, "source": "inferred" }).to_string(),
+    }))
+}
+
+async fn persist_vin_metadata(db: &Database, vin: &str, meta: &VpicMetadata) -> Result<(), Error> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "INSERT INTO vin_decode_cache
+                (vin, status, year, make, model, engine_family, raw_response, source, fetched_at, latest_error)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, NOW(), '')
+             ON CONFLICT (vin) DO UPDATE SET
+                status = EXCLUDED.status,
+                year = EXCLUDED.year,
+                make = EXCLUDED.make,
+                model = EXCLUDED.model,
+                engine_family = EXCLUDED.engine_family,
+                raw_response = EXCLUDED.raw_response,
+                source = EXCLUDED.source,
+                fetched_at = NOW(),
+                next_retry_at = NULL,
+                latest_error = ''",
+            &[
+                &vin,
+                &meta.status,
+                &meta.year,
+                &meta.make,
+                &meta.model,
+                &meta.engine_family,
+                &meta.raw,
+                &meta.source,
+            ],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    drop(client);
+    apply_vehicle_metadata(db, vin, meta).await
+}
+
+async fn apply_cached_vehicle_metadata(db: &Database, vehicle_key: &str) -> Result<(), Error> {
+    let vin = vehicle_key.trim().to_ascii_uppercase();
+    if !is_exact_vin(&vin) {
+        return Ok(());
+    }
+    let client = db.get().await?;
+    let cached = client
+        .query_opt(
+            "SELECT status, year, make, model, engine_family, source, raw_response::text
+             FROM vin_decode_cache
+             WHERE vin = $1 AND status = 'ok'",
+            &[&vin],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    drop(client);
+    let Some(row) = cached else {
+        return Ok(());
+    };
+    let meta = VpicMetadata {
+        status: row.get(0),
+        year: row.get(1),
+        make: row.get(2),
+        model: row.get(3),
+        engine_family: row.get(4),
+        source: row.get(5),
+        raw: row.get(6),
+    };
+    apply_vehicle_metadata(db, &vin, &meta).await
+}
+
+async fn apply_vehicle_metadata(
+    db: &Database,
+    vin: &str,
+    meta: &VpicMetadata,
+) -> Result<(), Error> {
+    let client = db.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT year, make, model, engine_family FROM vehicle WHERE vin = $1",
+            &[&vin],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let next_year = fill_year(row.get(0), meta.year);
+    let next_make = fill_text(row.get::<_, String>(1), &meta.make);
+    let next_model = fill_text(row.get::<_, String>(2), &meta.model);
+    let next_engine_family = fill_text(row.get::<_, String>(3), &meta.engine_family);
+    client
+        .execute(
+            "UPDATE vehicle
+             SET year = $2,
+                 make = $3,
+                 model = $4,
+                 engine_family = $5,
+                 updated_at = NOW()
+             WHERE vin = $1",
+            &[
+                &vin,
+                &next_year,
+                &next_make,
+                &next_model,
+                &next_engine_family,
+            ],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    Ok(())
 }
 
 fn normalize_dropbox_url(input: &str) -> Result<String, Error> {
@@ -568,13 +729,27 @@ fn normalize_dropbox_url(input: &str) -> Result<String, Error> {
         ));
     }
     if host != "dl.dropboxusercontent.com"
-        && !(url.path().starts_with("/s/") || url.path().starts_with("/sh/"))
+        && !(url.path().starts_with("/s/")
+            || url.path().starts_with("/sh/")
+            || url.path().starts_with("/scl/fo/"))
     {
         return Err(Error::BadRequest(
             "shared link must be a Dropbox shared folder URL".into(),
         ));
     }
-    url.query_pairs_mut().clear().append_pair("dl", "1");
+    let pairs = url
+        .query_pairs()
+        .filter(|(key, _)| key != "dl")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    {
+        let mut query = url.query_pairs_mut();
+        query.clear();
+        for (key, value) in pairs {
+            query.append_pair(&key, &value);
+        }
+        query.append_pair("dl", "1");
+    }
     Ok(url.to_string())
 }
 
@@ -591,7 +766,12 @@ fn redacted_label(url: &str) -> String {
     let token = parsed
         .as_ref()
         .and_then(|url| url.path_segments())
-        .and_then(|mut segments| segments.nth(1))
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .next_back()
+                .unwrap_or("")
+        })
         .unwrap_or("");
     let suffix = token
         .chars()
@@ -638,6 +818,53 @@ fn classify_archive_path(path: &str) -> Option<ArchiveEntry> {
 
 fn is_exact_vin(value: &str) -> bool {
     value.len() == 17 && value.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn pattern_key(vin: &str, year: i32) -> Option<String> {
+    let normalized = vin.trim().to_ascii_uppercase();
+    if !is_exact_vin(&normalized) || year <= 0 {
+        return None;
+    }
+    Some(format!("{}:{year}", &normalized[..8]))
+}
+
+fn fill_text(current: String, incoming: &str) -> String {
+    if current.trim().is_empty() && !incoming.trim().is_empty() {
+        incoming.trim().to_string()
+    } else {
+        current
+    }
+}
+
+fn fill_year(current: i32, incoming: i32) -> i32 {
+    if current <= 0 && incoming > 0 {
+        incoming
+    } else {
+        current
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InferenceCandidate {
+    make: String,
+    model: String,
+    engine_family: String,
+}
+
+impl InferenceCandidate {
+    fn is_complete(&self) -> bool {
+        !self.make.trim().is_empty()
+            && !self.model.trim().is_empty()
+            && !self.engine_family.trim().is_empty()
+    }
+
+    fn dedupe_key(&self) -> (String, String, String) {
+        (
+            self.make.trim().to_ascii_lowercase(),
+            self.model.trim().to_ascii_lowercase(),
+            self.engine_family.trim().to_ascii_lowercase(),
+        )
+    }
 }
 
 fn pick(row: &Value, key: &str) -> String {
@@ -755,8 +982,33 @@ mod tests {
         let url = normalize_dropbox_url("https://www.dropbox.com/sh/abcdef123456?dl=0").unwrap();
         assert_eq!(url, "https://www.dropbox.com/sh/abcdef123456?dl=1");
         assert_eq!(redacted_label(&url), "www.dropbox.com ...3456");
+        let folder_url = normalize_dropbox_url(
+            "https://www.dropbox.com/scl/fo/fgj5fyfxse9rhnu2hsmlc/AO7l11OpkSQzD7n26no2_4Y?rlkey=vp1fr2exybsjivqtp61b3iwd1&st=dgxlda06&dl=0"
+        ).unwrap();
+        assert!(folder_url.contains("rlkey=vp1fr2exybsjivqtp61b3iwd1"));
+        assert!(folder_url.contains("st=dgxlda06"));
+        assert!(folder_url.ends_with("dl=1"));
+        assert_eq!(redacted_label(&folder_url), "www.dropbox.com ...2_4Y");
         assert!(normalize_dropbox_url("http://www.dropbox.com/sh/abc").is_err());
         assert!(normalize_dropbox_url("https://example.com/sh/abc").is_err());
+    }
+
+    #[test]
+    fn builds_pattern_keys_for_exact_vins_only() {
+        assert_eq!(
+            pattern_key("1HGCP3F89BA032306", 2011).as_deref(),
+            Some("1HGCP3F8:2011")
+        );
+        assert_eq!(pattern_key("DEMO-HONDA-ACCORD", 2011), None);
+        assert_eq!(pattern_key("1HGCP3F89BA032306", 0), None);
+    }
+
+    #[test]
+    fn fills_only_blank_vehicle_fields() {
+        assert_eq!(fill_text(String::new(), "Honda"), "Honda");
+        assert_eq!(fill_text("Existing".into(), "Honda"), "Existing");
+        assert_eq!(fill_year(0, 2011), 2011);
+        assert_eq!(fill_year(2020, 2011), 2020);
     }
 
     #[test]

@@ -30,6 +30,8 @@ scargo/
 │       ├── auth.js    # Auth-page logic — /api/auth/* + explicit guest consent
 │       ├── index.html  # Dashboard SPA (Chart.js from CDN)
 │       ├── app.js      # Dashboard logic — fetches /api/analysis/dashboard
+│       ├── dropbox.html # Dedicated shared-link ingest management page
+│       ├── dropbox.js   # Dropbox-page logic — /api/ingest-sources/shared-link
 │       ├── vehicles.html # Dedicated vehicle-management page
 │       └── vehicles.js   # Vehicle-management page logic
 ├── src/
@@ -268,16 +270,18 @@ exist, otherwise dev/test rebuilds use the guest account. It continues past bad
 CSVs, prints a failure summary, and exits non-zero if any file failed.
 
 Deployed Dropbox ingestion uses one saved shared folder link per signed-in
-non-guest account. Set `SCARGO_SHARED_LINK_INGEST=true` to enable the background
-poller and `SCARGO_SHARED_LINK_POLL_SECONDS` for its interval. Shared-link sync
-downloads the folder archive server-side, accepts only direct
+non-guest account. Users manage that source on `/dropbox.html`. Set
+`SCARGO_SHARED_LINK_INGEST=true` to enable the background poller and
+`SCARGO_SHARED_LINK_POLL_SECONDS` for its interval. Shared-link sync downloads
+the folder archive server-side, accepts only direct
 `<vehicle-key>/<file>.csv` children, records root or nested CSV skips in
 `shared_ingest_file`, skips already ingested path+hash rows, and calls the same
 account-scoped CSV helper as manual uploads. Exact 17-character VIN folder names
-use the cached NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never
-trigger vPIC. The full shared URL is not returned to the browser after save.
-Users should share a narrow OBD Fusion `CsvLogs` folder and revoke the link in
-Dropbox to cut external access.
+first try a unique VIN-pattern match from existing metadata, then use the cached
+NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never trigger
+runtime metadata lookup. The full shared URL is not returned to the browser
+after save. Users should share a narrow OBD Fusion `CsvLogs` folder and revoke
+the link in Dropbox to cut external access.
 
 Incremental drop-folder uploads still use `scripts/scan-and-ingest.py`. The
 watcher records successful vehicle-key+SHA-256 uploads in

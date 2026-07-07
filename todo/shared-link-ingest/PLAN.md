@@ -44,12 +44,14 @@ Success means:
 12. After ingest, record rows, duplicate state, upload id, and latest per-file error in the ledger.
 13. For every direct child folder whose name is a valid 17-character VIN:
    - check the VIN decode cache first.
-   - if missing or retryable, call the official NHTSA vPIC API from the worker.
+   - if no usable cache row exists, try a unique exact-pattern match from known VIN metadata using VIN positions 1-8 plus model year.
+   - if no unique match exists and the retry window allows it, call the official NHTSA vPIC API from the worker.
    - normalize make, model, model year, displacement, cylinder layout, electrification, and engine family using the existing script logic as the source behavior.
-   - update `vehicle` metadata only when the fetched field is non-empty and the current vehicle field is empty or less specific.
+   - update `vehicle` metadata only when the fetched or inferred field is non-empty and the current vehicle field is empty or less specific.
 14. Keep manual offline scripts for bulk repair, but shared-link VIN folders must not require `scripts/fetch-vin-decodes.py` or `scripts/backfill-vehicle-metadata.py`.
-15. Add dashboard controls near account/upload controls:
+15. Add a dedicated `/dropbox.html` management page:
    - shared link input, save, delete, pause/resume, sync now, status, last sync/success, ingested count, duplicate count, latest error.
+   - Add a real sidebar/nav entry from the dashboard and vehicles pages.
    - Never render the full stored shared link after save; show only a redacted label.
 16. Update `README.md`, `AGENTS.md`, `.env.example`, and privacy docs for the new shared-link design.
 17. Document that anyone with the shared link can read the Dropbox folder, so users should share a narrow OBD Fusion `CsvLogs` folder and revoke the link in Dropbox to cut access.

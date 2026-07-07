@@ -488,25 +488,6 @@
   #upload-status.ok { color: var(--green); }
   #upload-status.err { color: var(--red); }
 
-  .source-grid {
-    display: grid;
-    grid-template-columns: minmax(260px, 1fr) auto auto auto minmax(180px, 0.8fr);
-    gap: 0.75rem;
-    align-items: end;
-  }
-
-  #shared-link-status {
-    color: var(--muted);
-    font-size: 0.82rem;
-    min-height: 38px;
-    display: flex;
-    align-items: center;
-    overflow-wrap: anywhere;
-  }
-
-  #shared-link-status.ok { color: var(--green); }
-  #shared-link-status.err { color: var(--red); }
-
   .controls {
     display: grid;
     grid-template-columns: minmax(160px, 1fr) minmax(140px, 0.7fr) minmax(160px, 0.9fr) minmax(160px, 0.9fr) minmax(160px, 0.9fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) auto;
@@ -712,7 +693,6 @@
     .hero-grid { grid-template-columns: 1fr; }
     .controls { grid-template-columns: repeat(4, minmax(140px, 1fr)); }
     .upload-bar form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   @media (max-width: 720px) {
@@ -725,8 +705,7 @@
     .health-strip,
     .stats,
     .controls,
-    .upload-bar form,
-    .source-grid { grid-template-columns: 1fr; }
+    .upload-bar form { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
   }
 </style>
@@ -740,8 +719,8 @@
     <nav class="nav-list" aria-label="Dashboard sections">
       <a class="nav-item active" href="#"><span class="nav-icon"></span><span>Dashboard</span></a>
       <a class="nav-item" href="/vehicles.html"><span class="nav-icon circle"></span><span>Vehicles</span></a>
-      <a class="nav-item" href="#"><span class="nav-icon line"></span><span>Trends</span></a>
-      <a class="nav-item" href="#"><span class="nav-icon circle"></span><span>Alerts</span></a>
+      <a class="nav-item" href="/dropbox.html"><span class="nav-icon line"></span><span>Dropbox</span></a>
+      <a class="nav-item" href="#"><span class="nav-icon circle"></span><span>Trends</span></a>
       <a class="nav-item" href="#"><span class="nav-icon"></span><span>Reports</span></a>
     </nav>
     <div class="sidebar-spacer"></div>
@@ -835,20 +814,6 @@
         <button id="upload-btn" type="submit">Upload CSV</button>
         <span id="upload-status" role="status" aria-live="polite"></span>
       </form>
-    </section>
-
-    <section class="upload-bar" id="shared-link-panel" aria-label="Shared link ingest">
-      <div class="source-grid">
-        <div class="field">
-          <label for="shared-link-input">Dropbox shared folder</label>
-          <input id="shared-link-input" type="url" autocomplete="off" placeholder="https://www.dropbox.com/sh/...">
-        </div>
-        <button id="shared-link-save-btn" type="button">Save</button>
-        <button id="shared-link-pause-btn" type="button">Pause</button>
-        <button id="shared-link-sync-btn" type="button">Sync now</button>
-        <button id="shared-link-delete-btn" type="button">Delete</button>
-        <span id="shared-link-status" role="status" aria-live="polite"></span>
-      </div>
     </section>
 
     <section class="controls" aria-label="Dashboard controls">
