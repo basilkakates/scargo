@@ -141,6 +141,7 @@ scoped to the authenticated account.
 | GET | `/api/dropbox/oauth/callback` | Validate OAuth state, store encrypted Dropbox tokens, and redirect back into the app |
 | GET | `/api/dropbox/connection` | Read Dropbox connection status for the signed-in non-guest account, or `enabled=false` when support is off |
 | POST | `/api/dropbox/connection/pause` | Pause or resume Dropbox polling for the signed-in non-guest account |
+| POST | `/api/dropbox/connection/sync-now` | Run one Dropbox sync pass for the signed-in non-guest account |
 | DELETE | `/api/dropbox/connection` | Remove the signed-in non-guest account's Dropbox connection and stored tokens |
 | GET | `/api/channels` | Channel registry used by the dashboard, including display-unit and metric-policy metadata |
 | GET | `/api/vehicles` | Account-linked vehicles with owner-visible metadata, reading counts, upload counts, sharing state, and pending approval counts |
@@ -204,6 +205,10 @@ key. Examples:
 
 The dashboard uses `/api/channels` metadata to let users pick display units per
 metric on the front end without changing the stored series or analysis routes.
+Signed-in non-guest users can also manage Dropbox ingest from the dashboard:
+connect OAuth, pause or resume polling, run one sync pass, disconnect, and view
+the fixed ingest folder plus last sync, success, ingest, duplicate, and latest
+error status. Guest users do not see Dropbox controls.
 It also returns each metric's `category`, `sensitivity`, `rollup`,
 `public_cohort`, and `derived_preferred` policy fields. New ingest writes raw
 metrics and incrementally maintains a durable `vehicle_metric_day` rollup only

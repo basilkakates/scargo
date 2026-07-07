@@ -113,6 +113,9 @@ connections every `SCARGO_DROPBOX_POLL_SEC`, treats each direct child folder
 under that root as the VIN or vehicle key, and ingests only
 `/OBD Fusion/CsvLogs/<VIN>/*.csv`. CSV files directly under the root are skipped
 with a visible status error because no VIN folder exists.
+Signed-in dashboard users can connect Dropbox, pause or resume polling, run a
+manual sync pass, disconnect, and view folder/status/count/error metadata from
+the dashboard. Guest users cannot manage Dropbox connections.
 
 ### Build & run
 ```bash
@@ -190,6 +193,7 @@ time indexes.
 | GET | `/api/dropbox/oauth/callback` | Validate OAuth state, store encrypted Dropbox tokens, and redirect safely back into the app |
 | GET | `/api/dropbox/connection` | Read account-owned Dropbox connection status, or `enabled=false` when Dropbox support is off |
 | POST | `/api/dropbox/connection/pause` | Pause or resume Dropbox polling for the signed-in non-guest account |
+| POST | `/api/dropbox/connection/sync-now` | Run one Dropbox sync pass for the signed-in non-guest account |
 | DELETE | `/api/dropbox/connection` | Remove the signed-in non-guest account's Dropbox connection and token data |
 | POST | `/api/ingest/csv?vin=VIN` | Upload live OBD CSV export body → `{"rows_ingested": N}` or `400` on metric value-kind conflict |
 | GET | `/api/analysis/dashboard` | Batched dashboard series. Query: `?view=summary`, `?limit=N`, `?channel_limit=N`, `?vehicle_id=UUID`, `?start=...`, `?end=...`, `?bucket=1d|1w|1mon`, `?channels=key1,key2` |

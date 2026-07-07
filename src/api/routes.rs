@@ -17,6 +17,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(super::dropbox::oauth_callback)
             .service(super::dropbox::connection)
             .service(super::dropbox::pause_connection)
+            .service(super::dropbox::sync_now)
             .service(super::dropbox::delete_connection)
             .service(super::vehicles::list_vehicles)
             .service(super::vehicles::set_exact_vin_sharing)

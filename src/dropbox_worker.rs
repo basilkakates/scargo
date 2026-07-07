@@ -43,6 +43,23 @@ pub async fn sync_once(
     Ok(())
 }
 
+pub async fn sync_account_once(
+    db: &Database,
+    cfg: &DropboxConfig,
+    account_id: Uuid,
+) -> Result<(), Error> {
+    let Some(connection) = account_connection(db, account_id).await? else {
+        return Err(Error::NotFound("dropbox connection".into()));
+    };
+    let api = ReqwestDropboxApi::new();
+    if let Err(err) = sync_connection(db, cfg, &api, &connection).await {
+        mark_connection_error(db, connection.id, "dropbox sync failed").await?;
+        tracing::warn!(connection_id = %connection.id, "dropbox sync failed: {err:?}");
+        return Err(err);
+    }
+    Ok(())
+}
+
 pub trait DropboxApi: Send + Sync {
     fn refresh_access_token<'a>(
         &'a self,
@@ -252,6 +269,26 @@ async fn active_connections(db: &Database) -> Result<Vec<Connection>, Error> {
             encrypted_refresh_token: row.get(4),
         })
         .collect())
+}
+
+async fn account_connection(db: &Database, account_id: Uuid) -> Result<Option<Connection>, Error> {
+    let client = db.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT id, account_id, root_path, cursor, encrypted_refresh_token
+             FROM dropbox_connection
+             WHERE account_id = $1",
+            &[&account_id],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    Ok(row.map(|row| Connection {
+        id: row.get(0),
+        account_id: row.get(1),
+        root_path: row.get(2),
+        cursor: row.get(3),
+        encrypted_refresh_token: row.get(4),
+    }))
 }
 
 async fn already_done(

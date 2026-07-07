@@ -22,6 +22,8 @@ let channelSeq = 0;
 let availableChannels = [];
 let visibleChartLimit = INITIAL_CHART_LIMIT;
 let currentAccount = null;
+let currentDropbox = null;
+let dropboxBusy = false;
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -230,6 +232,16 @@ async function apiPostJson(path, body = {}) {
   return r.json();
 }
 
+async function apiDelete(path) {
+  const r = await fetch(API + path, {
+    method: 'DELETE',
+    headers: scopedHeaders(),
+    credentials: 'same-origin',
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
 async function checkHealth() {
   try { await apiGet('/health'); setStatus(true); }
   catch { setStatus(false); }
@@ -249,6 +261,127 @@ function setUploadStatus(text, kind = '') {
 function setTokenStatus(text) {
   const status = document.getElementById('token-status');
   if (status) status.textContent = text;
+}
+
+function setDropboxStatus(text, kind = '') {
+  const status = document.getElementById('dropbox-status');
+  if (!status) return;
+  status.textContent = text;
+  status.className = kind;
+}
+
+function formatOptionalTimestamp(value) {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Never';
+  return formatTimestamp(value);
+}
+
+function setDropboxBusy(busy) {
+  dropboxBusy = busy;
+  renderDropbox();
+}
+
+function renderDropbox(payload = currentDropbox) {
+  const panel = document.getElementById('dropbox-panel');
+  if (!panel) return;
+  const signedIn = isSignedInAccount();
+  panel.style.display = signedIn ? '' : 'none';
+  if (!signedIn) return;
+
+  currentDropbox = payload || null;
+  const enabled = currentDropbox?.enabled !== false;
+  const connected = Boolean(currentDropbox?.connected);
+  const paused = currentDropbox?.status === 'paused';
+  const counts = value => (typeof value === 'number' ? value.toLocaleString() : '0');
+
+  document.getElementById('dropbox-root').textContent = currentDropbox?.root_path || '/OBD Fusion/CsvLogs';
+  document.getElementById('dropbox-last-sync').textContent = formatOptionalTimestamp(currentDropbox?.last_sync_at);
+  document.getElementById('dropbox-last-success').textContent = formatOptionalTimestamp(currentDropbox?.last_success_at);
+  document.getElementById('dropbox-ingested').textContent = counts(currentDropbox?.ingested_count);
+  document.getElementById('dropbox-duplicates').textContent = counts(currentDropbox?.duplicate_count);
+  document.getElementById('dropbox-error').textContent = currentDropbox?.latest_error || 'None';
+
+  const connect = document.getElementById('dropbox-connect-btn');
+  const sync = document.getElementById('dropbox-sync-btn');
+  const pause = document.getElementById('dropbox-pause-btn');
+  const disconnect = document.getElementById('dropbox-disconnect-btn');
+
+  connect.style.display = enabled && !connected ? '' : 'none';
+  sync.style.display = enabled && connected ? '' : 'none';
+  pause.style.display = enabled && connected ? '' : 'none';
+  disconnect.style.display = enabled && connected ? '' : 'none';
+  pause.textContent = paused ? 'Resume' : 'Pause';
+
+  [connect, sync, pause, disconnect].forEach(button => {
+    button.disabled = dropboxBusy || !enabled;
+  });
+
+  if (!enabled) setDropboxStatus('Dropbox support is disabled', '');
+  else if (!connected) setDropboxStatus('Dropbox not connected', '');
+  else setDropboxStatus(paused ? 'Polling paused' : `Connected (${currentDropbox.status || 'active'})`, paused ? '' : 'ok');
+}
+
+async function loadDropboxConnection() {
+  if (!isSignedInAccount()) {
+    renderDropbox(null);
+    return;
+  }
+  try {
+    renderDropbox(await apiGet('/dropbox/connection'));
+  } catch (err) {
+    currentDropbox = null;
+    setDropboxStatus(`Dropbox status failed: ${err.message}`, 'err');
+  }
+}
+
+async function startDropboxOAuth() {
+  setDropboxBusy(true);
+  try {
+    const payload = await apiPostJson('/dropbox/oauth/start', { redirect_path: '/' });
+    if (payload.authorize_url) window.location.assign(payload.authorize_url);
+  } catch (err) {
+    setDropboxStatus(`Dropbox connect failed: ${err.message}`, 'err');
+  } finally {
+    setDropboxBusy(false);
+  }
+}
+
+async function syncDropboxNow() {
+  setDropboxBusy(true);
+  setDropboxStatus('Syncing Dropbox...');
+  try {
+    renderDropbox(await apiPostJson('/dropbox/connection/sync-now'));
+    await reloadAccountData();
+  } catch (err) {
+    setDropboxStatus(`Dropbox sync failed: ${err.message}`, 'err');
+  } finally {
+    setDropboxBusy(false);
+  }
+}
+
+async function toggleDropboxPause() {
+  const paused = currentDropbox?.status !== 'paused';
+  setDropboxBusy(true);
+  try {
+    renderDropbox(await apiPostJson('/dropbox/connection/pause', { paused }));
+  } catch (err) {
+    setDropboxStatus(`Dropbox update failed: ${err.message}`, 'err');
+  } finally {
+    setDropboxBusy(false);
+  }
+}
+
+async function disconnectDropbox() {
+  setDropboxBusy(true);
+  try {
+    await apiDelete('/dropbox/connection');
+    await loadDropboxConnection();
+  } catch (err) {
+    setDropboxStatus(`Dropbox disconnect failed: ${err.message}`, 'err');
+  } finally {
+    setDropboxBusy(false);
+  }
 }
 
 function updateChromeState() {
@@ -348,6 +481,7 @@ function setAccount(account) {
   if (logoutButton) logoutButton.style.display = isSignedInAccount() ? '' : 'none';
   const tokenControls = document.getElementById('token-controls');
   if (tokenControls) tokenControls.style.display = isSignedInAccount() ? '' : 'none';
+  renderDropbox(isSignedInAccount() ? currentDropbox : null);
   updateChromeState();
 }
 
@@ -913,6 +1047,10 @@ document.getElementById('logout-btn').addEventListener('click', logout);
 document.getElementById('sign-in-btn').addEventListener('click', redirectToAuthPage);
 document.getElementById('token-btn').addEventListener('click', generateUploadToken);
 document.getElementById('copy-token-btn').addEventListener('click', copyUploadToken);
+document.getElementById('dropbox-connect-btn').addEventListener('click', startDropboxOAuth);
+document.getElementById('dropbox-sync-btn').addEventListener('click', syncDropboxNow);
+document.getElementById('dropbox-pause-btn').addEventListener('click', toggleDropboxPause);
+document.getElementById('dropbox-disconnect-btn').addEventListener('click', disconnectDropbox);
 document.getElementById('upload-form').addEventListener('submit', handleUpload);
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   await loadChannels();
@@ -993,6 +1131,7 @@ document.getElementById('load-more-btn').addEventListener('click', () => {
   }
   updateChromeState();
   checkHealth();
+  await loadDropboxConnection();
   syncTimeWindowControls();
   await loadVehicles();
   await loadChannels();

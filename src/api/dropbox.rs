@@ -1,5 +1,6 @@
 use crate::config::{DropboxConfig, Settings};
 use crate::db::Database;
+use crate::dropbox_worker;
 use crate::Error;
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse};
 use aes_gcm_siv::aead::{Aead, KeyInit};
@@ -281,6 +282,24 @@ pub(crate) async fn delete_connection(
         return Err(Error::NotFound("dropbox connection".into()));
     }
     Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
+}
+
+#[post("/dropbox/connection/sync-now")]
+pub(crate) async fn sync_now(
+    db: web::Data<Database>,
+    settings: web::Data<Settings>,
+    req: HttpRequest,
+) -> Result<HttpResponse, Error> {
+    let Some(cfg) = settings.dropbox.as_ref() else {
+        return Err(Error::BadRequest("dropbox support is disabled".into()));
+    };
+    let client = db.get().await?;
+    let account = require_signed_in_account(&client, &req).await?;
+    drop(client);
+    dropbox_worker::sync_account_once(db.get_ref(), cfg, account.id).await?;
+    let client = db.get().await?;
+    let row = load_connection(&client, account.id).await?;
+    Ok(HttpResponse::Ok().json(connection_response(Some(cfg), row)))
 }
 
 fn authorize_url(cfg: &DropboxConfig, state: &str) -> String {

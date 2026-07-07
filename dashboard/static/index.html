@@ -448,6 +448,51 @@
     flex: 1 1 280px;
   }
 
+  .dropbox-panel {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .dropbox-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .dropbox-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+
+  .dropbox-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+    gap: 0.65rem;
+  }
+
+  .dropbox-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 0.65rem;
+    min-width: 0;
+  }
+
+  .dropbox-value {
+    color: var(--text);
+    font-weight: 800;
+    margin-top: 0.22rem;
+    overflow-wrap: anywhere;
+  }
+
+  .dropbox-error {
+    color: var(--red);
+    overflow-wrap: anywhere;
+  }
+
   .field {
     display: grid;
     gap: 0.32rem;
@@ -487,6 +532,13 @@
 
   #upload-status.ok { color: var(--green); }
   #upload-status.err { color: var(--red); }
+
+  #dropbox-status {
+    color: var(--muted);
+  }
+
+  #dropbox-status.ok { color: var(--green); }
+  #dropbox-status.err { color: var(--red); }
 
   .controls {
     display: grid;
@@ -704,6 +756,7 @@
     .vehicle-card { grid-template-columns: 1fr; }
     .health-strip,
     .stats,
+    .dropbox-grid,
     .controls,
     .upload-bar form { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
@@ -798,6 +851,47 @@
         <input id="upload-token-output" type="text" readonly placeholder="Upload token appears once">
         <button id="copy-token-btn" type="button">Copy</button>
         <span id="token-status" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="upload-bar dropbox-panel" id="dropbox-panel" aria-label="Dropbox ingest" style="display:none">
+      <div class="dropbox-head">
+        <div>
+          <div class="profile-label">Dropbox ingest</div>
+          <span id="dropbox-status" role="status" aria-live="polite">Checking Dropbox...</span>
+        </div>
+        <div class="dropbox-actions">
+          <button id="dropbox-connect-btn" type="button">Connect Dropbox</button>
+          <button id="dropbox-sync-btn" class="ghost-button" type="button">Sync now</button>
+          <button id="dropbox-pause-btn" class="ghost-button" type="button">Pause</button>
+          <button id="dropbox-disconnect-btn" class="ghost-button" type="button">Disconnect</button>
+        </div>
+      </div>
+      <div class="dropbox-grid">
+        <div class="dropbox-item">
+          <div class="profile-label">Folder</div>
+          <div class="dropbox-value" id="dropbox-root">/OBD Fusion/CsvLogs</div>
+        </div>
+        <div class="dropbox-item">
+          <div class="profile-label">Last sync</div>
+          <div class="dropbox-value" id="dropbox-last-sync">Never</div>
+        </div>
+        <div class="dropbox-item">
+          <div class="profile-label">Last success</div>
+          <div class="dropbox-value" id="dropbox-last-success">Never</div>
+        </div>
+        <div class="dropbox-item">
+          <div class="profile-label">Ingested</div>
+          <div class="dropbox-value" id="dropbox-ingested">0</div>
+        </div>
+        <div class="dropbox-item">
+          <div class="profile-label">Duplicates</div>
+          <div class="dropbox-value" id="dropbox-duplicates">0</div>
+        </div>
+        <div class="dropbox-item">
+          <div class="profile-label">Latest error</div>
+          <div class="dropbox-value dropbox-error" id="dropbox-error">None</div>
+        </div>
       </div>
     </section>
 
