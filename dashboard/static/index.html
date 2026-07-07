@@ -467,6 +467,13 @@
     flex-wrap: wrap;
   }
 
+  .dropbox-folder {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto;
+    gap: 0.55rem;
+    align-items: end;
+  }
+
   .dropbox-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(130px, 1fr));
@@ -757,6 +764,7 @@
     .health-strip,
     .stats,
     .dropbox-grid,
+    .dropbox-folder,
     .controls,
     .upload-bar form { grid-template-columns: 1fr; }
     .grid { grid-template-columns: 1fr; }
@@ -866,6 +874,13 @@
           <button id="dropbox-pause-btn" class="ghost-button" type="button">Pause</button>
           <button id="dropbox-disconnect-btn" class="ghost-button" type="button">Disconnect</button>
         </div>
+      </div>
+      <div class="dropbox-folder">
+        <div class="field">
+          <label for="dropbox-root-input">Folder</label>
+          <input id="dropbox-root-input" type="text" autocomplete="off" value="/OBD Fusion/CsvLogs">
+        </div>
+        <button id="dropbox-save-folder-btn" class="ghost-button" type="button">Save folder</button>
       </div>
       <div class="dropbox-grid">
         <div class="dropbox-item">

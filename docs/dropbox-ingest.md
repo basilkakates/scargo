@@ -1,7 +1,8 @@
 # Dropbox Ingest
 
-Dropbox ingest lets a signed-in Scargo account connect one Dropbox account and
-sync OBD Fusion CSV exports without moving remote files. It is off by default.
+Dropbox ingest lets a signed-in Scargo account connect one Dropbox account,
+choose one Dropbox root folder, and sync OBD Fusion CSV exports without moving
+remote files. It is off by default.
 
 ## Dropbox App Setup
 
@@ -34,7 +35,8 @@ encryption key must decode to exactly 32 bytes as hex or base64.
 
 ## Source Folder
 
-v1 reads one fixed Dropbox root:
+Each signed-in user chooses the Dropbox root folder during connect or from the
+dashboard after connect. `/OBD Fusion/CsvLogs` is the default example:
 
 ```text
 /OBD Fusion/CsvLogs/
@@ -43,15 +45,16 @@ v1 reads one fixed Dropbox root:
 ```
 
 The direct child folder is the VIN or non-identifying vehicle key. The worker
-ingests only `/OBD Fusion/CsvLogs/<VIN>/*.csv`.
+ingests only `<selected-root>/<VIN-or-vehicle-key>/*.csv`.
 
-Root-level CSV files under `/OBD Fusion/CsvLogs` are skipped because no vehicle
-key is available. Nested CSV paths below the VIN folder are also skipped in v1.
-Scargo records skipped file status so the dashboard can show the latest error.
+Root-level CSV files under the selected root are skipped because no vehicle key
+is available. Nested CSV paths below the VIN folder are also skipped. Scargo
+records skipped file status so the dashboard can show the latest error.
 
 ## Account And Privacy Boundary
 
 - One Dropbox connection is stored per Scargo account.
+- Each connection stores that account's selected root folder.
 - Guest sessions and bearer upload tokens cannot manage Dropbox connections.
 - OAuth refresh and access tokens are encrypted at rest.
 - Tokens are never returned to the browser.
@@ -63,6 +66,7 @@ Scargo records skipped file status so the dashboard can show the latest error.
 Dropbox state and Scargo upload state both participate in de-duplication:
 
 - `dropbox_connection.cursor` stores the latest completed Dropbox cursor.
+- `dropbox_connection.root_path` stores the selected Dropbox root folder.
 - `dropbox_ingest_file` records path, rev, status, rows, duplicate state, and errors.
 - Already ingested or duplicate `(connection, path, rev)` entries are skipped.
 - `ingest_upload` enforces one content hash per vehicle, preventing duplicate
@@ -70,15 +74,16 @@ Dropbox state and Scargo upload state both participate in de-duplication:
 - Dropbox files are not moved, renamed, or archived remotely in v1.
 
 These tables must live on persistent database storage and be included in normal
-database backups. Losing them can force OAuth reconnects and replay Dropbox file
-scans, although `ingest_upload` still protects already-loaded telemetry rows.
+database backups. Losing them can force OAuth reconnects, lose chosen paths, and
+replay Dropbox file scans, although `ingest_upload` still protects
+already-loaded telemetry rows.
 
 ## Manual Smoke Flow
 
 1. Start Scargo with Dropbox enabled and a persistent database.
 2. Register or log in as a non-guest user.
-3. Open `/vehicles.html` and connect Dropbox.
-4. Add one small CSV under `/OBD Fusion/CsvLogs/DEMO-HONDA-ACCORD/`.
+3. Open the dashboard, enter the Dropbox root folder, and connect Dropbox.
+4. Add one small CSV under `<root>/DEMO-HONDA-ACCORD/`.
 5. Click `Sync now` or wait for `SCARGO_DROPBOX_POLL_SEC`.
 6. Confirm `/api/dropbox/connection` reports `connected=true` and updated
    `last_success_at`, `ingested_count`, or `duplicate_count`.
@@ -90,7 +95,7 @@ scans, although `ingest_upload` still protects already-loaded telemetry rows.
 - Verify the Dropbox app redirect URI exactly matches deployment base URL plus
   `/api/dropbox/oauth/callback`.
 - Verify the database volume and backups include OAuth tokens, cursors, and
-  file dedupe rows.
+  selected paths, and file dedupe rows.
 - Inspect `/api/dropbox/connection` from a signed-in browser session for current
   status, root path, counts, and latest error.
 - Watch app logs for sync errors, but do not log OAuth tokens or CSV contents.

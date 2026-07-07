@@ -16,6 +16,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(super::dropbox::oauth_start)
             .service(super::dropbox::oauth_callback)
             .service(super::dropbox::connection)
+            .service(super::dropbox::update_folder)
             .service(super::dropbox::pause_connection)
             .service(super::dropbox::sync_now)
             .service(super::dropbox::delete_connection)

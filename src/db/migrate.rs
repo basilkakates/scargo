@@ -80,6 +80,7 @@ const CORE_DDL: &[&str] = &[
         state_hash    TEXT PRIMARY KEY,
         account_id    UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
         redirect_path TEXT NOT NULL,
+        root_path     TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs',
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         expires_at    TIMESTAMPTZ NOT NULL
     );",
@@ -353,6 +354,7 @@ mod tests {
         let runtime = super::RUNTIME_DDL.join("\n");
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_connection"));
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_oauth_state"));
+        assert!(ddl.contains("root_path     TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs'"));
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_ingest_file"));
         assert!(runtime.contains("idx_dropbox_connection_status"));
     }

@@ -7,6 +7,7 @@ const THEME_STORAGE = 'scargo.theme';
 const GUEST_CONSENT_STORAGE = 'scargo.guestConsent';
 const FLASH_UPLOAD_TOKEN_STORAGE = 'scargo.flashUploadToken';
 const INITIAL_CHART_LIMIT = 12;
+const DEFAULT_DROPBOX_ROOT = '/OBD Fusion/CsvLogs';
 const COLORS  = ['#9b6cff','#66df7c','#ffcb45','#4fc3ff','#ff625d','#d5dbe6','#7ee787','#f2cc60','#bc8cff','#39c5cf','#ffb86b','#8bd5ca','#c6a0f6','#ed8796','#79c0ff','#56d364','#e5534b','#db6d28','#d2a8ff','#ffa198'];
 const DATE_FORMAT = new Intl.DateTimeFormat([], { year: 'numeric', month: '2-digit', day: '2-digit' });
 const TIME_FORMAT = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -295,7 +296,10 @@ function renderDropbox(payload = currentDropbox) {
   const paused = currentDropbox?.status === 'paused';
   const counts = value => (typeof value === 'number' ? value.toLocaleString() : '0');
 
-  document.getElementById('dropbox-root').textContent = currentDropbox?.root_path || '/OBD Fusion/CsvLogs';
+  const rootPath = currentDropbox?.root_path || DEFAULT_DROPBOX_ROOT;
+  document.getElementById('dropbox-root').textContent = rootPath;
+  const rootInput = document.getElementById('dropbox-root-input');
+  if (rootInput && document.activeElement !== rootInput) rootInput.value = rootPath;
   document.getElementById('dropbox-last-sync').textContent = formatOptionalTimestamp(currentDropbox?.last_sync_at);
   document.getElementById('dropbox-last-success').textContent = formatOptionalTimestamp(currentDropbox?.last_success_at);
   document.getElementById('dropbox-ingested').textContent = counts(currentDropbox?.ingested_count);
@@ -303,17 +307,19 @@ function renderDropbox(payload = currentDropbox) {
   document.getElementById('dropbox-error').textContent = currentDropbox?.latest_error || 'None';
 
   const connect = document.getElementById('dropbox-connect-btn');
+  const saveFolder = document.getElementById('dropbox-save-folder-btn');
   const sync = document.getElementById('dropbox-sync-btn');
   const pause = document.getElementById('dropbox-pause-btn');
   const disconnect = document.getElementById('dropbox-disconnect-btn');
 
   connect.style.display = enabled && !connected ? '' : 'none';
+  saveFolder.style.display = enabled && connected ? '' : 'none';
   sync.style.display = enabled && connected ? '' : 'none';
   pause.style.display = enabled && connected ? '' : 'none';
   disconnect.style.display = enabled && connected ? '' : 'none';
   pause.textContent = paused ? 'Resume' : 'Pause';
 
-  [connect, sync, pause, disconnect].forEach(button => {
+  [connect, saveFolder, sync, pause, disconnect].forEach(button => {
     button.disabled = dropboxBusy || !enabled;
   });
 
@@ -338,10 +344,24 @@ async function loadDropboxConnection() {
 async function startDropboxOAuth() {
   setDropboxBusy(true);
   try {
-    const payload = await apiPostJson('/dropbox/oauth/start', { redirect_path: '/' });
+    const rootPath = document.getElementById('dropbox-root-input')?.value || DEFAULT_DROPBOX_ROOT;
+    const payload = await apiPostJson('/dropbox/oauth/start', { redirect_path: '/', root_path: rootPath });
     if (payload.authorize_url) window.location.assign(payload.authorize_url);
   } catch (err) {
     setDropboxStatus(`Dropbox connect failed: ${err.message}`, 'err');
+  } finally {
+    setDropboxBusy(false);
+  }
+}
+
+async function saveDropboxFolder() {
+  setDropboxBusy(true);
+  try {
+    const rootPath = document.getElementById('dropbox-root-input')?.value || DEFAULT_DROPBOX_ROOT;
+    renderDropbox(await apiPostJson('/dropbox/connection/folder', { root_path: rootPath }));
+    await reloadAccountData();
+  } catch (err) {
+    setDropboxStatus(`Dropbox folder failed: ${err.message}`, 'err');
   } finally {
     setDropboxBusy(false);
   }
@@ -1048,6 +1068,7 @@ document.getElementById('sign-in-btn').addEventListener('click', redirectToAuthP
 document.getElementById('token-btn').addEventListener('click', generateUploadToken);
 document.getElementById('copy-token-btn').addEventListener('click', copyUploadToken);
 document.getElementById('dropbox-connect-btn').addEventListener('click', startDropboxOAuth);
+document.getElementById('dropbox-save-folder-btn').addEventListener('click', saveDropboxFolder);
 document.getElementById('dropbox-sync-btn').addEventListener('click', syncDropboxNow);
 document.getElementById('dropbox-pause-btn').addEventListener('click', toggleDropboxPause);
 document.getElementById('dropbox-disconnect-btn').addEventListener('click', disconnectDropbox);

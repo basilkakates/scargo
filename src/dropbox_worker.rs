@@ -226,10 +226,10 @@ async fn apply_entry(
 fn map_path(root_path: &str, path_lower: &str) -> PathAction {
     let root = root_path.trim_matches('/').to_ascii_lowercase();
     let path = path_lower.trim_matches('/');
-    let Some(rest) = path.strip_prefix(&root) else {
+    if path != root && !path.starts_with(&format!("{root}/")) {
         return PathAction::Ignore;
     };
-    let rest = rest.trim_start_matches('/');
+    let rest = path[root.len()..].trim_start_matches('/');
     if rest.is_empty() {
         return PathAction::Ignore;
     }
@@ -653,12 +653,9 @@ mod tests {
     #[test]
     fn maps_direct_vin_csv() {
         assert_eq!(
-            map_path(
-                "/OBD Fusion/CsvLogs",
-                "/obd fusion/csvlogs/1hgcm82633a004352/trip.csv"
-            ),
+            map_path("/Logs", "/logs/DEMO-HONDA-ACCORD/a.csv"),
             PathAction::Ingest {
-                vin: "1hgcm82633a004352".into()
+                vin: "DEMO-HONDA-ACCORD".into()
             }
         );
     }
@@ -666,7 +663,7 @@ mod tests {
     #[test]
     fn root_csv_is_visible_skip() {
         assert_eq!(
-            map_path("/OBD Fusion/CsvLogs", "/obd fusion/csvlogs/trip.csv"),
+            map_path("/Logs", "/logs/a.csv"),
             PathAction::Skip {
                 error: "CSV is directly under Dropbox root; put it in a VIN folder"
             }
@@ -676,10 +673,7 @@ mod tests {
     #[test]
     fn nested_csv_is_visible_skip() {
         assert_eq!(
-            map_path(
-                "/OBD Fusion/CsvLogs",
-                "/obd fusion/csvlogs/VIN/nested/trip.csv"
-            ),
+            map_path("/Logs", "/logs/DEMO-HONDA-ACCORD/nested/a.csv"),
             PathAction::Skip {
                 error: "Nested Dropbox CSV paths are not supported in v1"
             }
@@ -690,6 +684,18 @@ mod tests {
     fn non_csv_is_ignored() {
         assert_eq!(
             map_path("/OBD Fusion/CsvLogs", "/obd fusion/csvlogs/VIN/readme.txt"),
+            PathAction::Ignore
+        );
+    }
+
+    #[test]
+    fn outside_selected_root_is_ignored() {
+        assert_eq!(
+            map_path("/Logs", "/other/DEMO-HONDA-ACCORD/a.csv"),
+            PathAction::Ignore
+        );
+        assert_eq!(
+            map_path("/Logs", "/logs2/DEMO-HONDA-ACCORD/a.csv"),
             PathAction::Ignore
         );
     }

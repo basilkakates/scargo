@@ -109,20 +109,22 @@ network. Add TLS only when a production database requires it.
 Dropbox support is disabled unless `SCARGO_DROPBOX_ENABLED=true`. When enabled,
 require `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `SCARGO_BASE_URL`, and
 `SCARGO_TOKEN_ENCRYPTION_KEY`; the encryption key must decode to 32 bytes as
-hex or base64. v1 fixes the Dropbox ingest root to `/OBD Fusion/CsvLogs`.
-Enabled deployments start a background worker that polls active account
-connections every `SCARGO_DROPBOX_POLL_SEC`, treats each direct child folder
-under that root as the VIN or vehicle key, and ingests only
-`/OBD Fusion/CsvLogs/<VIN>/*.csv`. CSV files directly under the root are skipped
-with a visible status error because no VIN folder exists.
-Signed-in dashboard users can connect Dropbox, pause or resume polling, run a
-manual sync pass, disconnect, and view folder/status/count/error metadata from
-the dashboard. Guest users cannot manage Dropbox connections. The Dropbox OAuth
+hex or base64. Each signed-in account chooses its Dropbox ingest root, with
+`/OBD Fusion/CsvLogs` as the default example. Enabled deployments start a
+background worker that polls active account connections every
+`SCARGO_DROPBOX_POLL_SEC`, treats each direct child folder under that selected
+root as the VIN or vehicle key, and ingests only `<root>/<VIN>/*.csv`. CSV files
+directly under the root are skipped with a visible status error because no VIN
+folder exists.
+Signed-in dashboard users can choose the root folder, connect Dropbox, pause or
+resume polling, run a manual sync pass, disconnect, and view
+folder/status/count/error metadata from the dashboard. Guest users cannot manage
+Dropbox connections. The Dropbox OAuth
 redirect URI is `${SCARGO_BASE_URL}/api/dropbox/oauth/callback`; the worker uses
 offline token access, persists cursors and per-file state in the database, skips
 root-level and nested CSV files, and never moves or archives remote files in v1.
 Deployments with Dropbox enabled need persistent database storage and backups for
-encrypted tokens, cursors, and file de-duplication state.
+encrypted tokens, selected paths, cursors, and file de-duplication state.
 
 ### Build & run
 ```bash
@@ -157,8 +159,8 @@ Core tables:
 | `account` (table) | User account registry: username, display name, password hash, guest flag |
 | `account_session` (table) | Hashed dashboard session cookies with expiry |
 | `account_api_token` (table) | Hashed upload API tokens for scripts and direct ingest |
-| `dropbox_connection` (table) | One Dropbox OAuth connection per account, with encrypted token material and worker status |
-| `dropbox_oauth_state` (table) | Short-lived hashed OAuth state rows bound to account id and safe redirect path |
+| `dropbox_connection` (table) | One Dropbox OAuth connection per account, with encrypted token material, selected root path, and worker status |
+| `dropbox_oauth_state` (table) | Short-lived hashed OAuth state rows bound to account id, safe redirect path, and pending root path |
 | `dropbox_ingest_file` (table) | Dropbox file sync ledger for per-connection ingest status and duplicate tracking |
 | `ingest_upload` (table) | Vehicle+content hash de-duplication plus approval timestamps for public exact-VIN and cohort sharing |
 | `account_vehicle_profile` (table) | Per-account default sharing preference for a vehicle's exact-VIN public stats |
@@ -199,6 +201,7 @@ time indexes.
 | POST | `/api/dropbox/oauth/start` | Create a Dropbox OAuth authorize URL for the signed-in non-guest account |
 | GET | `/api/dropbox/oauth/callback` | Validate OAuth state, store encrypted Dropbox tokens, and redirect safely back into the app |
 | GET | `/api/dropbox/connection` | Read account-owned Dropbox connection status, or `enabled=false` when Dropbox support is off |
+| POST | `/api/dropbox/connection/folder` | Update the signed-in account's selected Dropbox root folder |
 | POST | `/api/dropbox/connection/pause` | Pause or resume Dropbox polling for the signed-in non-guest account |
 | POST | `/api/dropbox/connection/sync-now` | Run one Dropbox sync pass for the signed-in non-guest account |
 | DELETE | `/api/dropbox/connection` | Remove the signed-in non-guest account's Dropbox connection and token data |

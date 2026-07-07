@@ -14,10 +14,12 @@ use uuid::Uuid;
 const DROPBOX_AUTHORIZE_URL: &str = "https://www.dropbox.com/oauth2/authorize";
 const DROPBOX_TOKEN_URL: &str = "https://api.dropboxapi.com/oauth2/token";
 const DEFAULT_REDIRECT_PATH: &str = "/vehicles.html";
+const DEFAULT_ROOT_PATH: &str = "/OBD Fusion/CsvLogs";
 
 #[derive(Deserialize)]
 pub(crate) struct OAuthStartRequest {
     redirect_path: Option<String>,
+    root_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -29,6 +31,11 @@ struct OAuthStartResponse {
 #[derive(Deserialize)]
 pub(crate) struct PauseRequest {
     paused: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FolderRequest {
+    root_path: String,
 }
 
 #[derive(Serialize)]
@@ -63,6 +70,7 @@ struct DropboxTokenResponse {
 struct PendingOAuthState {
     account_id: Uuid,
     redirect_path: String,
+    root_path: String,
 }
 
 #[derive(Clone)]
@@ -93,6 +101,11 @@ pub(crate) async fn oauth_start(
             .and_then(|value| value.redirect_path.as_deref())
             .unwrap_or(DEFAULT_REDIRECT_PATH),
     )?;
+    let root_path = normalize_root_path(
+        body.as_ref()
+            .and_then(|value| value.root_path.as_deref())
+            .unwrap_or(cfg.root_path),
+    )?;
     let state_token = new_state_token();
     let state_hash = hash_token(&state_token);
     client
@@ -105,9 +118,9 @@ pub(crate) async fn oauth_start(
     client
         .execute(
             "INSERT INTO dropbox_oauth_state
-                (state_hash, account_id, redirect_path, expires_at)
-             VALUES ($1, $2, $3, NOW() + INTERVAL '15 minutes')",
-            &[&state_hash, &account.id, &redirect_path],
+                (state_hash, account_id, redirect_path, root_path, expires_at)
+             VALUES ($1, $2, $3, $4, NOW() + INTERVAL '15 minutes')",
+            &[&state_hash, &account.id, &redirect_path, &root_path],
         )
         .await
         .map_err(|_| Error::Database)?;
@@ -183,7 +196,7 @@ pub(crate) async fn oauth_callback(
                 &connection_id,
                 &pending.account_id,
                 &token.account_id,
-                &cfg.root_path,
+                &pending.root_path,
                 &encrypted_refresh,
                 &encrypted_access,
                 &access_token_expires_at,
@@ -210,7 +223,7 @@ pub(crate) async fn connection(
         .dropbox
         .as_ref()
         .map(|cfg| cfg.root_path)
-        .unwrap_or("/OBD Fusion/CsvLogs");
+        .unwrap_or(DEFAULT_ROOT_PATH);
     let Some(cfg) = settings.dropbox.as_ref() else {
         return Ok(HttpResponse::Ok().json(ConnectionResponse {
             enabled: false,
@@ -227,6 +240,40 @@ pub(crate) async fn connection(
 
     let client = db.get().await?;
     let account = require_signed_in_account(&client, &req).await?;
+    let row = load_connection(&client, account.id).await?;
+    Ok(HttpResponse::Ok().json(connection_response(Some(cfg), row)))
+}
+
+#[post("/dropbox/connection/folder")]
+pub(crate) async fn update_folder(
+    db: web::Data<Database>,
+    settings: web::Data<Settings>,
+    req: HttpRequest,
+    body: web::Json<FolderRequest>,
+) -> Result<HttpResponse, Error> {
+    let Some(cfg) = settings.dropbox.as_ref() else {
+        return Err(Error::BadRequest("dropbox support is disabled".into()));
+    };
+    let client = db.get().await?;
+    let account = require_signed_in_account(&client, &req).await?;
+    let root_path = normalize_root_path(&body.root_path)?;
+    let updated = client
+        .execute(
+            "UPDATE dropbox_connection
+             SET root_path = $2,
+                 cursor = NULL,
+                 latest_error = NULL,
+                 last_sync_at = NULL,
+                 last_success_at = NULL,
+                 updated_at = NOW()
+             WHERE account_id = $1",
+            &[&account.id, &root_path],
+        )
+        .await
+        .map_err(|_| Error::Database)?;
+    if updated == 0 {
+        return Err(Error::NotFound("dropbox connection".into()));
+    }
     let row = load_connection(&client, account.id).await?;
     Ok(HttpResponse::Ok().json(connection_response(Some(cfg), row)))
 }
@@ -356,17 +403,18 @@ async fn consume_oauth_state(
         .query_opt(
             "DELETE FROM dropbox_oauth_state
              WHERE state_hash = $1
-             RETURNING account_id, redirect_path, expires_at",
+             RETURNING account_id, redirect_path, root_path, expires_at",
             &[&hash_token(state)],
         )
         .await
         .map_err(|_| Error::Database)?
         .ok_or_else(|| Error::BadRequest("invalid dropbox oauth state".into()))?;
-    let expires_at: DateTime<Utc> = row.get(2);
+    let expires_at: DateTime<Utc> = row.get(3);
     validate_state_expiry(expires_at)?;
     Ok(PendingOAuthState {
         account_id: row.get(0),
         redirect_path: row.get(1),
+        root_path: row.get(2),
     })
 }
 
@@ -434,7 +482,7 @@ fn connection_response(
             status: None,
             root_path: cfg
                 .map(|value| value.root_path)
-                .unwrap_or("/OBD Fusion/CsvLogs")
+                .unwrap_or(DEFAULT_ROOT_PATH)
                 .to_string(),
             last_sync_at: None,
             last_success_at: None,
@@ -443,6 +491,19 @@ fn connection_response(
             duplicate_count: 0,
         },
     }
+}
+
+fn normalize_root_path(value: &str) -> Result<String, Error> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "/" || !trimmed.starts_with('/') {
+        return Err(Error::BadRequest(
+            "root_path must be an absolute Dropbox folder path".into(),
+        ));
+    }
+    if trimmed.contains('\n') || trimmed.contains('\r') {
+        return Err(Error::BadRequest("root_path must be one line".into()));
+    }
+    Ok(trimmed.trim_end_matches('/').to_string())
 }
 
 fn validate_redirect_path(value: &str) -> Result<String, Error> {
@@ -530,6 +591,21 @@ mod tests {
         );
         assert!(validate_redirect_path("https://example.com").is_err());
         assert!(validate_redirect_path("//example.com").is_err());
+    }
+
+    #[test]
+    fn root_path_is_normalized() {
+        assert_eq!(
+            normalize_root_path(" /Logs/Trips/ ").unwrap(),
+            "/Logs/Trips"
+        );
+        assert_eq!(
+            normalize_root_path("/OBD Fusion/CsvLogs/").unwrap(),
+            "/OBD Fusion/CsvLogs"
+        );
+        assert!(normalize_root_path("").is_err());
+        assert!(normalize_root_path("Logs").is_err());
+        assert!(normalize_root_path("/").is_err());
     }
 
     #[test]
