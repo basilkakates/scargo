@@ -9,7 +9,7 @@ ownership, and user-specific data must not leak through comparison features.
 
 | Class | Examples | API exposure |
 |-------|----------|--------------|
-| Account identity | username, password hash, session/token hash | Internal only |
+| Account identity | username, password hash, session hash | Internal only |
 | Vehicle identity | VIN, stable vehicle UUID | VIN internal only; UUID exposed only to owners |
 | Ownership | account-to-upload access rows, vehicle profile sharing preferences | Internal only |
 | Dropbox ingest state | encrypted refresh token, selected root path, cursor, per-file ledger | Internal only |
@@ -21,9 +21,9 @@ ownership, and user-specific data must not leak through comparison features.
 ## Current Access Model
 
 The browser lands on a dedicated `/auth.html` page, then uses username/password
-login with an HttpOnly session cookie before entering the dashboard. External
-upload tools use generated bearer upload tokens. Dev/test mode still exposes
-the deterministic `guest`/`local-dev` account, but dashboard access now
+login with an HttpOnly session cookie before entering the dashboard. Dashboard
+CSV upload and Dropbox OAuth management use that same session. Dev/test mode
+still exposes the deterministic `guest`/`local-dev` account, but dashboard access now
 requires an explicit browser-side `Continue as guest` choice stored only in
 session storage; production disables that fallback unless explicitly
 configured. Deprecated `X-Scargo-User-Key` remains only as a dev/test
@@ -33,16 +33,16 @@ On CSV ingest, Scargo:
 
 1. Computes the stable vehicle id from VIN.
 2. Upserts the vehicle without exposing VIN in list responses.
-3. Resolves the account from a session, bearer token, or dev/test guest fallback.
+3. Resolves the account from a session or dev/test guest fallback.
 4. Creates or reuses one `ingest_upload` row for that vehicle and content hash.
 5. Links the upload to the account through `account_vehicle_upload` with private access enabled.
 6. Stores raw readings and daily rollups keyed by `upload_id`, vehicle id, channel, and time.
 
 Dropbox ingest uses the same account-scoped CSV helper. Managing Dropbox on
 `/dropbox.html` requires an HttpOnly dashboard session for a signed-in
-non-guest user; bearer upload tokens and guests cannot start OAuth, inspect,
-pause, sync, or delete connections. The API returns status, selected root path,
-and sync counts, but not the stored refresh token. Deleting a connection
+non-guest user; guests cannot start OAuth, inspect, pause, sync, or delete
+connections. The API returns status, selected root path, and sync counts, but
+not the stored refresh token. Deleting a connection
 removes the encrypted token, cursor, and file ledger while leaving already
 ingested telemetry and public approval state intact.
 
@@ -123,7 +123,6 @@ Implemented:
 
 - `account` table with username, display name, password hash, and guest flag.
 - `account_session` stores hashed dashboard session tokens with expiry.
-- `account_api_token` stores hashed bearer tokens for upload tooling.
 - `ingest_upload` stores vehicle-level duplicate detection plus approval state
   for public exact-VIN and cohort sharing.
 - `account_vehicle_profile` stores the per-account default exact-VIN sharing
@@ -145,7 +144,7 @@ Implemented:
   are skipped in the API and database, not only by folder tooling.
 - Core ingest takes a database advisory lock per vehicle while writing readings,
   so concurrent uploads for the same vehicle serialize regardless of whether
-  they come from the dashboard, folder watcher, or a future mobile client.
+  they come from the dashboard, Dropbox worker, or a future mobile client.
 - `/api/vehicles/{vehicle_id}/exact-vin-sharing` lets a signed-in owner toggle
   exact-VIN public sharing for all linked uploads on that vehicle.
 - `GET /api/auth/me` reports whether the current session may use manual public

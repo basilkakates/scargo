@@ -56,7 +56,7 @@ The visual refresh must preserve the existing dashboard contract:
 - A dedicated `auth.html` entry page can share the visual system, but the main
   dashboard at `/` should show signed-in account chrome only, not inline
   login/register fields.
-- Reads use the dashboard session cookie; upload tooling uses bearer tokens.
+- Reads and dashboard CSV uploads use the dashboard session cookie.
 - Vehicle, time range, metric, unit, raw, and summary controls continue to use
   the existing API endpoints.
 - Theme selection is a front-end preference stored in browser local storage.

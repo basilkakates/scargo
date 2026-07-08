@@ -43,7 +43,6 @@ struct ParsedReadings {
 }
 
 const INSERT_BATCH_SIZE: usize = 1_000;
-const BULK_INSERT_BATCH_SIZE: usize = 10_000;
 
 #[derive(Clone, Copy)]
 struct IngestOptions {
@@ -58,12 +57,6 @@ const HTTP_INGEST_OPTIONS: IngestOptions = IngestOptions {
     insert_batch_size: INSERT_BATCH_SIZE,
 };
 
-const BULK_INGEST_OPTIONS: IngestOptions = IngestOptions {
-    advisory_lock: false,
-    update_daily_rollups: false,
-    insert_batch_size: BULK_INSERT_BATCH_SIZE,
-};
-
 #[derive(Clone, Copy)]
 struct MetricCacheEntry {
     id: i64,
@@ -71,7 +64,7 @@ struct MetricCacheEntry {
 }
 
 #[derive(Default)]
-pub struct BulkMetricCache {
+struct MetricCache {
     ids: HashMap<String, MetricCacheEntry>,
 }
 
@@ -86,20 +79,10 @@ pub async fn ingest_reader<R: Read>(
         vin,
         upload_id,
         db,
-        &mut BulkMetricCache::default(),
+        &mut MetricCache::default(),
         HTTP_INGEST_OPTIONS,
     )
     .await
-}
-
-pub async fn bulk_ingest_reader<R: Read>(
-    reader: R,
-    vin: &str,
-    upload_id: uuid::Uuid,
-    db: &Database,
-    cache: &mut BulkMetricCache,
-) -> Result<usize, Error> {
-    ingest_reader_with_options(reader, vin, upload_id, db, cache, BULK_INGEST_OPTIONS).await
 }
 
 async fn ingest_reader_with_options<R: Read>(
@@ -107,7 +90,7 @@ async fn ingest_reader_with_options<R: Read>(
     vin: &str,
     upload_id: uuid::Uuid,
     db: &Database,
-    cache: &mut BulkMetricCache,
+    cache: &mut MetricCache,
     options: IngestOptions,
 ) -> Result<usize, Error> {
     let vehicle_id = model::vin_to_uuid(vin);
@@ -179,7 +162,7 @@ async fn ingest_reader_with_options<R: Read>(
 async fn insert_raw_metric_batch(
     txn: &tokio_postgres::Transaction<'_>,
     readings: &[RawMetricReading],
-    cache: &mut BulkMetricCache,
+    cache: &mut MetricCache,
     options: IngestOptions,
 ) -> Result<usize, Error> {
     if readings.is_empty() {
@@ -340,7 +323,7 @@ fn should_roll_up_metric(key: &str) -> bool {
 async fn metric_ids(
     txn: &tokio_postgres::Transaction<'_>,
     readings: &[RawMetricReading],
-    cache: &mut BulkMetricCache,
+    cache: &mut MetricCache,
 ) -> Result<Vec<i64>, Error> {
     let mut ids = HashMap::<String, i64>::new();
 

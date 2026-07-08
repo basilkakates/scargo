@@ -5,7 +5,7 @@ const DEFAULT_POSTGRES_USER: &str = "scargo";
 const DEFAULT_POSTGRES_DB: &str = "scargo";
 const DEFAULT_HTTP_HOST: &str = "127.0.0.1";
 const DEFAULT_HTTP_PORT: u16 = 8080;
-const DEFAULT_DROPBOX_ROOT_PATH: &str = "/OBD Fusion/CsvLogs";
+const DEFAULT_DROPBOX_ROOT_PATH: &str = "/Apps/OBD Fusion/CsvLogs";
 const DEFAULT_DROPBOX_POLL_SEC: u64 = 300;
 
 #[derive(Debug, Clone)]
@@ -19,6 +19,7 @@ pub struct DropboxConfig {
     pub app_key: String,
     pub app_secret: String,
     pub base_url: String,
+    pub redirect_uri: String,
     pub token_encryption_key: [u8; 32],
     pub poll_sec: u64,
     pub root_path: &'static str,
@@ -122,7 +123,8 @@ fn read_dropbox_config() -> Result<Option<DropboxConfig>, String> {
     Ok(Some(DropboxConfig {
         app_key: required_env("DROPBOX_APP_KEY")?,
         app_secret: required_env("DROPBOX_APP_SECRET")?,
-        base_url: normalize_base_url(&required_env("SCARGO_BASE_URL")?)?,
+        base_url: normalize_url("SCARGO_BASE_URL", &required_env("SCARGO_BASE_URL")?)?,
+        redirect_uri: resolve_dropbox_redirect_uri()?,
         token_encryption_key: parse_encryption_key(&required_env("SCARGO_TOKEN_ENCRYPTION_KEY")?)?,
         poll_sec: parse_dropbox_poll_sec()?,
         root_path: DEFAULT_DROPBOX_ROOT_PATH,
@@ -138,10 +140,20 @@ fn parse_dropbox_poll_sec() -> Result<u64, String> {
     }
 }
 
-fn normalize_base_url(value: &str) -> Result<String, String> {
+fn resolve_dropbox_redirect_uri() -> Result<String, String> {
+    match non_empty_env("SCARGO_DROPBOX_REDIRECT_URI") {
+        Some(value) => normalize_url("SCARGO_DROPBOX_REDIRECT_URI", &value),
+        None => Ok(format!(
+            "{}/api/dropbox/oauth/callback",
+            normalize_url("SCARGO_BASE_URL", &required_env("SCARGO_BASE_URL")?)?
+        )),
+    }
+}
+
+fn normalize_url(name: &str, value: &str) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/');
     if trimmed.is_empty() || !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-        return Err("SCARGO_BASE_URL must start with http:// or https://".into());
+        return Err(format!("{name} must start with http:// or https://"));
     }
     Ok(trimmed.to_string())
 }
@@ -279,6 +291,32 @@ mod tests {
     fn rejects_short_encryption_key() {
         let err = parse_encryption_key("abcd").unwrap_err();
         assert!(err.contains("32 bytes"));
+    }
+
+    #[test]
+    fn dropbox_redirect_uri_defaults_from_base_url() {
+        let _guard = env_lock().lock().unwrap();
+        with_env("SCARGO_BASE_URL", "https://example.com/", || {
+            without_env("SCARGO_DROPBOX_REDIRECT_URI", || {
+                let uri = resolve_dropbox_redirect_uri().unwrap();
+                assert_eq!(uri, "https://example.com/api/dropbox/oauth/callback");
+            });
+        });
+    }
+
+    #[test]
+    fn dropbox_redirect_uri_allows_exact_override() {
+        let _guard = env_lock().lock().unwrap();
+        with_env("SCARGO_BASE_URL", "https://example.com", || {
+            with_env(
+                "SCARGO_DROPBOX_REDIRECT_URI",
+                "https://auth.example.com/scargo/dropbox/callback/",
+                || {
+                    let uri = resolve_dropbox_redirect_uri().unwrap();
+                    assert_eq!(uri, "https://auth.example.com/scargo/dropbox/callback");
+                },
+            );
+        });
     }
 
     fn env_lock() -> &'static Mutex<()> {

@@ -411,8 +411,7 @@
     gap: 0.75rem;
   }
 
-  .auth-panel form,
-  .token-line {
+  .auth-panel form {
     display: flex;
     gap: 0.75rem;
     flex-wrap: wrap;
@@ -442,10 +441,6 @@
   .auth-panel .field {
     min-width: 180px;
     flex: 1 1 180px;
-  }
-
-  .token-line input {
-    flex: 1 1 280px;
   }
 
   .field {
@@ -792,12 +787,6 @@
           <button id="sign-in-btn" class="ghost-button" type="button">Sign in</button>
           <button id="logout-btn" type="button">Log out</button>
         </div>
-      </div>
-      <div class="token-line" id="token-controls">
-        <button id="token-btn" type="button">Create upload token</button>
-        <input id="upload-token-output" type="text" readonly placeholder="Upload token appears once">
-        <button id="copy-token-btn" type="button">Copy</button>
-        <span id="token-status" role="status" aria-live="polite"></span>
       </div>
     </section>
 

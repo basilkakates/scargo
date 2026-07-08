@@ -387,7 +387,7 @@
       <div class="account-meta">
         <div class="profile-label">Signed-in account</div>
         <div id="account-status" role="status" aria-live="polite">Checking session...</div>
-        <div class="account-note">Guests and bearer upload tokens cannot manage Dropbox connections.</div>
+        <div class="account-note">Guests cannot manage Dropbox connections.</div>
       </div>
       <div class="account-actions">
         <button class="ghost-button" type="button" id="refresh-btn">Refresh</button>
@@ -417,14 +417,14 @@
       <div class="source-head">
         <div>
           <div class="profile-label">Dropbox connection</div>
-          <div class="source-copy">Use a narrow root such as `/OBD Fusion/CsvLogs`. Full Dropbox visibility is granted to the app, but Scargo reads only the selected root.</div>
+          <div class="source-copy">Use the OBD Fusion app folder root `/Apps/OBD Fusion/CsvLogs`. Full Dropbox visibility is granted to the app, but Scargo reads only the selected root.</div>
         </div>
         <div id="page-status" role="status" aria-live="polite"></div>
       </div>
       <div class="source-grid">
         <div class="field">
           <label for="dropbox-root-input">Dropbox root folder</label>
-          <input id="dropbox-root-input" type="text" autocomplete="off" placeholder="/OBD Fusion/CsvLogs">
+          <input id="dropbox-root-input" type="text" autocomplete="off" placeholder="/Apps/OBD Fusion/CsvLogs">
         </div>
         <button id="dropbox-connect-btn" class="primary-button" type="button">Connect Dropbox</button>
         <button id="dropbox-save-btn" class="primary-button" type="button">Save folder</button>
@@ -436,7 +436,7 @@
       <div class="stats-grid" aria-label="Dropbox status">
         <article>
           <div class="card-label">Selected root</div>
-          <div class="stat-value" id="saved-root-label">/OBD Fusion/CsvLogs</div>
+          <div class="stat-value" id="saved-root-label">/Apps/OBD Fusion/CsvLogs</div>
           <div class="stat-copy">Tracked Dropbox folder</div>
         </article>
         <article>

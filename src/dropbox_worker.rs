@@ -3,6 +3,7 @@ use crate::config::DropboxConfig;
 use crate::db::Database;
 use crate::Error;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -15,6 +16,7 @@ const LIST_FOLDER_URL: &str = "https://api.dropboxapi.com/2/files/list_folder";
 const LIST_FOLDER_CONTINUE_URL: &str = "https://api.dropboxapi.com/2/files/list_folder/continue";
 const DOWNLOAD_URL: &str = "https://content.dropboxapi.com/2/files/download";
 const TOKEN_URL: &str = "https://api.dropboxapi.com/oauth2/token";
+const CURRENT_ACCOUNT_URL: &str = "https://api.dropboxapi.com/2/users/get_current_account";
 
 pub fn spawn(db: Database, cfg: DropboxConfig) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -82,21 +84,29 @@ pub trait DropboxApi: Send + Sync {
         refresh_token: &'a str,
     ) -> BoxFuture<'a, Result<String, Error>>;
 
+    fn current_account<'a>(
+        &'a self,
+        access_token: &'a str,
+    ) -> BoxFuture<'a, Result<CurrentAccount, Error>>;
+
     fn list_folder<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         root_path: &'a str,
     ) -> BoxFuture<'a, Result<ListResult, Error>>;
 
     fn list_folder_continue<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         cursor: &'a str,
     ) -> BoxFuture<'a, Result<ListResult, Error>>;
 
     fn download<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         path_lower: &'a str,
     ) -> BoxFuture<'a, Result<Vec<u8>, Error>>;
 }
@@ -134,6 +144,11 @@ pub struct ListResult {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct CurrentAccount {
+    pub root_namespace_id: String,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum PathAction {
     Ingest { vin: String },
@@ -152,24 +167,41 @@ async fn sync_connection(
         &connection.encrypted_refresh_token,
     )?;
     let access_token = api.refresh_access_token(cfg, &refresh_token).await?;
+    let current_account = api.current_account(&access_token).await?;
+    let path_root = dropbox_api_path_root(&current_account.root_namespace_id);
     let mut result = match connection.cursor.as_deref() {
-        Some(cursor) => api.list_folder_continue(&access_token, cursor).await?,
-        None => {
-            api.list_folder(&access_token, &connection.root_path)
+        Some(cursor) => {
+            api.list_folder_continue(&access_token, Some(path_root.as_str()), cursor)
                 .await?
+        }
+        None => {
+            api.list_folder(
+                &access_token,
+                Some(path_root.as_str()),
+                &connection.root_path,
+            )
+            .await?
         }
     };
 
     loop {
         for entry in &result.entries {
-            apply_entry(db, api, connection, &access_token, entry).await?;
+            apply_entry(
+                db,
+                api,
+                connection,
+                &access_token,
+                Some(path_root.as_str()),
+                entry,
+            )
+            .await?;
         }
         if !result.has_more {
             persist_cursor(db, connection.id, &result.cursor).await?;
             return Ok(());
         }
         result = api
-            .list_folder_continue(&access_token, &result.cursor)
+            .list_folder_continue(&access_token, Some(path_root.as_str()), &result.cursor)
             .await?;
     }
 }
@@ -179,6 +211,7 @@ async fn apply_entry(
     api: &impl DropboxApi,
     connection: &Connection,
     access_token: &str,
+    path_root: Option<&str>,
     entry: &DropboxEntry,
 ) -> Result<(), Error> {
     match entry {
@@ -190,7 +223,9 @@ async fn apply_entry(
                 if already_done(db, connection.id, &file.path_lower, &file.rev).await? {
                     return Ok(());
                 }
-                let body = api.download(access_token, &file.path_lower).await?;
+                let body = api
+                    .download(access_token, path_root, &file.path_lower)
+                    .await?;
                 let result = ingest::ingest_csv_for_account(
                     db,
                     connection.account_id,
@@ -491,6 +526,14 @@ async fn mark_connection_error(
     Ok(())
 }
 
+fn dropbox_api_path_root(root_namespace_id: &str) -> String {
+    serde_json::json!({
+        ".tag": "namespace_id",
+        "namespace_id": root_namespace_id,
+    })
+    .to_string()
+}
+
 struct ReqwestDropboxApi {
     client: reqwest::Client,
 }
@@ -528,7 +571,7 @@ impl DropboxApi for ReqwestDropboxApi {
                 .await
                 .map_err(|_| Error::Database)?;
             if !response.status().is_success() {
-                return Err(Error::BadRequest("dropbox token refresh failed".into()));
+                return Err(dropbox_api_error("dropbox token refresh failed", response).await);
             }
             let body = response.bytes().await.map_err(|_| Error::Database)?;
             serde_json::from_slice::<TokenResponse>(&body)
@@ -537,9 +580,44 @@ impl DropboxApi for ReqwestDropboxApi {
         })
     }
 
+    fn current_account<'a>(
+        &'a self,
+        access_token: &'a str,
+    ) -> BoxFuture<'a, Result<CurrentAccount, Error>> {
+        Box::pin(async move {
+            #[derive(Deserialize)]
+            struct CurrentAccountResponse {
+                root_info: RootInfo,
+            }
+
+            #[derive(Deserialize)]
+            struct RootInfo {
+                root_namespace_id: String,
+            }
+
+            let response = self
+                .client
+                .post(CURRENT_ACCOUNT_URL)
+                .bearer_auth(access_token)
+                .send()
+                .await
+                .map_err(|_| Error::Database)?;
+            if !response.status().is_success() {
+                return Err(dropbox_api_error("dropbox current account failed", response).await);
+            }
+            let body = response.bytes().await.map_err(|_| Error::Database)?;
+            serde_json::from_slice::<CurrentAccountResponse>(&body)
+                .map(|value| CurrentAccount {
+                    root_namespace_id: value.root_info.root_namespace_id,
+                })
+                .map_err(|_| Error::Database)
+        })
+    }
+
     fn list_folder<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         root_path: &'a str,
     ) -> BoxFuture<'a, Result<ListResult, Error>> {
         Box::pin(async move {
@@ -555,15 +633,17 @@ impl DropboxApi for ReqwestDropboxApi {
             })
             .map_err(|_| Error::Internal)?;
 
-            let response = self
-                .client
-                .post(LIST_FOLDER_URL)
-                .bearer_auth(access_token)
-                .header("Content-Type", "application/json")
-                .body(body)
-                .send()
-                .await
-                .map_err(|_| Error::Database)?;
+            let response = apply_dropbox_path_root(
+                self.client
+                    .post(LIST_FOLDER_URL)
+                    .bearer_auth(access_token)
+                    .header("Content-Type", "application/json"),
+                path_root,
+            )
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| Error::Database)?;
             parse_list_response(response).await
         })
     }
@@ -571,6 +651,7 @@ impl DropboxApi for ReqwestDropboxApi {
     fn list_folder_continue<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         cursor: &'a str,
     ) -> BoxFuture<'a, Result<ListResult, Error>> {
         Box::pin(async move {
@@ -581,15 +662,17 @@ impl DropboxApi for ReqwestDropboxApi {
 
             let body = serde_json::to_vec(&Body { cursor }).map_err(|_| Error::Internal)?;
 
-            let response = self
-                .client
-                .post(LIST_FOLDER_CONTINUE_URL)
-                .bearer_auth(access_token)
-                .header("Content-Type", "application/json")
-                .body(body)
-                .send()
-                .await
-                .map_err(|_| Error::Database)?;
+            let response = apply_dropbox_path_root(
+                self.client
+                    .post(LIST_FOLDER_CONTINUE_URL)
+                    .bearer_auth(access_token)
+                    .header("Content-Type", "application/json"),
+                path_root,
+            )
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| Error::Database)?;
             parse_list_response(response).await
         })
     }
@@ -597,6 +680,7 @@ impl DropboxApi for ReqwestDropboxApi {
     fn download<'a>(
         &'a self,
         access_token: &'a str,
+        path_root: Option<&'a str>,
         path_lower: &'a str,
     ) -> BoxFuture<'a, Result<Vec<u8>, Error>> {
         Box::pin(async move {
@@ -607,16 +691,18 @@ impl DropboxApi for ReqwestDropboxApi {
 
             let arg =
                 serde_json::to_string(&Arg { path: path_lower }).map_err(|_| Error::Internal)?;
-            let response = self
-                .client
-                .post(DOWNLOAD_URL)
-                .bearer_auth(access_token)
-                .header("Dropbox-API-Arg", arg)
-                .send()
-                .await
-                .map_err(|_| Error::Database)?;
+            let response = apply_dropbox_path_root(
+                self.client
+                    .post(DOWNLOAD_URL)
+                    .bearer_auth(access_token)
+                    .header("Dropbox-API-Arg", arg),
+                path_root,
+            )
+            .send()
+            .await
+            .map_err(|_| Error::Database)?;
             if !response.status().is_success() {
-                return Err(Error::BadRequest("dropbox file download failed".into()));
+                return Err(dropbox_api_error("dropbox file download failed", response).await);
             }
             response
                 .bytes()
@@ -627,14 +713,64 @@ impl DropboxApi for ReqwestDropboxApi {
     }
 }
 
+fn apply_dropbox_path_root(
+    request: reqwest::RequestBuilder,
+    path_root: Option<&str>,
+) -> reqwest::RequestBuilder {
+    match path_root {
+        Some(value) => request.header("Dropbox-API-Path-Root", value),
+        None => request,
+    }
+}
+
 async fn parse_list_response(response: reqwest::Response) -> Result<ListResult, Error> {
     if !response.status().is_success() {
-        return Err(Error::BadRequest("dropbox list folder failed".into()));
+        return Err(dropbox_api_error("dropbox list folder failed", response).await);
     }
     let body = response.bytes().await.map_err(|_| Error::Database)?;
     serde_json::from_slice::<ApiListResult>(&body)
         .map(Into::into)
         .map_err(|_| Error::Database)
+}
+
+async fn dropbox_api_error(prefix: &str, response: reqwest::Response) -> Error {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Error::BadRequest(format!(
+        "{prefix}: status={} {}",
+        status.as_u16(),
+        summarize_dropbox_error_body(&body)
+    ))
+}
+
+fn summarize_dropbox_error_body(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "empty response body".into();
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(summary) = value
+            .get("error_summary")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("error").and_then(Value::as_str))
+        {
+            return truncate_error_summary(summary);
+        }
+    }
+
+    truncate_error_summary(trimmed)
+}
+
+fn truncate_error_summary(value: &str) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = collapsed.chars();
+    let truncated: String = chars.by_ref().take(240).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 #[derive(Deserialize)]
@@ -730,7 +866,10 @@ mod tests {
     #[test]
     fn non_csv_is_ignored() {
         assert_eq!(
-            map_path("/OBD Fusion/CsvLogs", "/obd fusion/csvlogs/VIN/readme.txt"),
+            map_path(
+                "/Apps/OBD Fusion/CsvLogs",
+                "/apps/obd fusion/csvlogs/VIN/readme.txt",
+            ),
             PathAction::Ignore
         );
     }
@@ -744,6 +883,32 @@ mod tests {
         assert_eq!(
             map_path("/Logs", "/logs2/DEMO-HONDA-ACCORD/a.csv"),
             PathAction::Ignore
+        );
+    }
+
+    #[test]
+    fn summarize_dropbox_error_body_prefers_error_summary() {
+        assert_eq!(
+            summarize_dropbox_error_body(
+                r#"{"error_summary":"path/not_found/..","error":{".tag":"path"}}"#
+            ),
+            "path/not_found/.."
+        );
+    }
+
+    #[test]
+    fn summarize_dropbox_error_body_collapses_plain_text() {
+        assert_eq!(
+            summarize_dropbox_error_body("  line one\n line two  "),
+            "line one line two"
+        );
+    }
+
+    #[test]
+    fn dropbox_api_path_root_targets_namespace_id() {
+        assert_eq!(
+            dropbox_api_path_root("12345"),
+            r#"{".tag":"namespace_id","namespace_id":"12345"}"#
         );
     }
 }

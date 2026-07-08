@@ -10,16 +10,9 @@ struct Credentials {
     password: String,
 }
 
-#[derive(Deserialize)]
-struct TokenRequest {
-    label: Option<String>,
-}
-
 #[derive(Serialize)]
 struct AuthResponse {
     account: super::privacy::Account,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    upload_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -44,13 +37,9 @@ async fn register(
     let client = db.get().await?;
     let account = super::privacy::insert_account(&client, &username, &password_hash).await?;
     let session = super::privacy::create_session(&client, account.id).await?;
-    let upload_token = super::privacy::create_api_token(&client, account.id, "default").await?;
     Ok(HttpResponse::Ok()
         .cookie(session_cookie(&session))
-        .json(AuthResponse {
-            account,
-            upload_token: Some(upload_token),
-        }))
+        .json(AuthResponse { account }))
 }
 
 #[post("/auth/login")]
@@ -71,10 +60,7 @@ async fn login(
     let session = super::privacy::create_session(&client, account.id).await?;
     Ok(HttpResponse::Ok()
         .cookie(session_cookie(&session))
-        .json(AuthResponse {
-            account,
-            upload_token: None,
-        }))
+        .json(AuthResponse { account }))
 }
 
 #[post("/auth/logout")]
@@ -102,32 +88,6 @@ async fn me(db: web::Data<Database>, req: HttpRequest) -> Result<HttpResponse, E
                 && !account.is_guest,
         },
         account,
-    }))
-}
-
-#[post("/auth/tokens")]
-async fn create_token(
-    db: web::Data<Database>,
-    req: HttpRequest,
-    token: web::Json<TokenRequest>,
-) -> Result<HttpResponse, Error> {
-    let client = db.get().await?;
-    let account = super::privacy::session_account(&client, &req).await?;
-    if account.is_guest {
-        return Err(Error::BadRequest(
-            "guest accounts do not issue upload tokens".into(),
-        ));
-    }
-    let label = token
-        .label
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("upload");
-    let upload_token = super::privacy::create_api_token(&client, account.id, label).await?;
-    Ok(HttpResponse::Ok().json(AuthResponse {
-        account,
-        upload_token: Some(upload_token),
     }))
 }
 

@@ -12,7 +12,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(super::auth::login)
             .service(super::auth::logout)
             .service(super::auth::me)
-            .service(super::auth::create_token)
             .service(super::vehicles::list_vehicles)
             .service(super::vehicles::set_exact_vin_sharing)
             .service(super::vehicles::approve_exact_vin_sharing)

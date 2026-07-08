@@ -1,5 +1,4 @@
 use crate::Error;
-use actix_web::http::header;
 use actix_web::HttpRequest;
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -13,7 +12,6 @@ pub const SESSION_COOKIE: &str = "scargo_session";
 pub const GUEST_USERNAME: &str = "guest";
 pub const LOCAL_DEV_USER_KEY: &str = "local-dev";
 const USER_KEY_HEADER: &str = "x-scargo-user-key";
-const API_TOKEN_PREFIX: &str = "scargo_";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Account {
@@ -35,13 +33,6 @@ pub async fn resolve_account(
         if let Some(account) = account_from_session(client, &token).await? {
             return Ok(account);
         }
-    }
-
-    if let Some(token) = bearer_token(req) {
-        if let Some(account) = account_from_api_token(client, token).await? {
-            return Ok(account);
-        }
-        return Err(Error::Unauthorized);
     }
 
     if let Some(key) = legacy_user_key(req) {
@@ -108,33 +99,6 @@ pub async fn create_session(
         .await
         .map_err(|_| Error::Database)?;
     Ok(token)
-}
-
-pub async fn create_api_token(
-    client: &tokio_postgres::Client,
-    account_id: Uuid,
-    label: &str,
-) -> Result<String, Error> {
-    let token = new_token(API_TOKEN_PREFIX);
-    let token_hash = hash_token(&token);
-    client
-        .execute(
-            "INSERT INTO account_api_token (token_hash, account_id, label)
-             VALUES ($1, $2, $3)",
-            &[&token_hash, &account_id, &label],
-        )
-        .await
-        .map_err(|_| Error::Database)?;
-    Ok(token)
-}
-
-pub async fn api_token_account_id(
-    client: &tokio_postgres::Client,
-    token: &str,
-) -> Result<Option<Uuid>, Error> {
-    Ok(account_from_api_token(client, token)
-        .await?
-        .map(|account| account.id))
 }
 
 pub async fn find_account_by_username(
@@ -401,36 +365,6 @@ async fn account_from_session(
     Ok(row.map(account_from_row))
 }
 
-async fn account_from_api_token(
-    client: &tokio_postgres::Client,
-    token: &str,
-) -> Result<Option<Account>, Error> {
-    let token_hash = hash_token(token);
-    let row = client
-        .query_opt(
-            "SELECT a.id,
-                    COALESCE(a.username, ''),
-                    COALESCE(NULLIF(a.display_name, ''), a.username, a.label, 'Account'),
-                    a.is_guest
-             FROM account_api_token t
-             JOIN account a ON a.id = t.account_id
-             WHERE t.token_hash = $1 AND t.revoked_at IS NULL",
-            &[&token_hash],
-        )
-        .await
-        .map_err(|_| Error::Database)?;
-    if row.is_some() {
-        client
-            .execute(
-                "UPDATE account_api_token SET last_used_at = NOW() WHERE token_hash = $1",
-                &[&token_hash],
-            )
-            .await
-            .map_err(|_| Error::Database)?;
-    }
-    Ok(row.map(account_from_row))
-}
-
 async fn ensure_legacy_account(
     client: &tokio_postgres::Client,
     user_key: &str,
@@ -472,19 +406,6 @@ fn account_from_row(row: tokio_postgres::Row) -> Account {
 fn session_token(req: &HttpRequest) -> Option<String> {
     req.cookie(SESSION_COOKIE)
         .map(|cookie| cookie.value().trim().to_string())
-        .filter(|token| !token.is_empty())
-}
-
-fn bearer_token(req: &HttpRequest) -> Option<&str> {
-    let value = req
-        .headers()
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .trim();
-    value
-        .strip_prefix("Bearer ")
-        .map(str::trim)
         .filter(|token| !token.is_empty())
 }
 
@@ -559,13 +480,6 @@ mod tests {
         let hash = hash_password("correct horse battery staple").unwrap();
         assert!(verify_password(&hash, "correct horse battery staple"));
         assert!(!verify_password(&hash, "wrong password"));
-    }
-
-    #[test]
-    fn generated_api_tokens_are_prefixed_and_hashable() {
-        let token = new_token(API_TOKEN_PREFIX);
-        assert!(token.starts_with(API_TOKEN_PREFIX));
-        assert_ne!(hash_token(&token), hash_token("other"));
     }
 
     #[test]

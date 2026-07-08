@@ -1,6 +1,6 @@
 const API = '/api';
 const THEME_STORAGE = 'scargo.theme';
-const DEFAULT_ROOT = '/OBD Fusion/CsvLogs';
+const DEFAULT_ROOT = '/Apps/OBD Fusion/CsvLogs';
 
 let currentAccount = null;
 let currentConnection = null;

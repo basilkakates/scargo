@@ -14,7 +14,7 @@ use uuid::Uuid;
 const DROPBOX_AUTHORIZE_URL: &str = "https://www.dropbox.com/oauth2/authorize";
 const DROPBOX_TOKEN_URL: &str = "https://api.dropboxapi.com/oauth2/token";
 const DEFAULT_REDIRECT_PATH: &str = "/dropbox.html";
-const DEFAULT_ROOT_PATH: &str = "/OBD Fusion/CsvLogs";
+const DEFAULT_ROOT_PATH: &str = "/Apps/OBD Fusion/CsvLogs";
 
 #[derive(Deserialize)]
 pub(crate) struct OAuthStartRequest {
@@ -379,7 +379,7 @@ fn authorize_url(cfg: &DropboxConfig, state: &str) -> Result<String, Error> {
 }
 
 fn callback_url(cfg: &DropboxConfig) -> String {
-    format!("{}/api/dropbox/oauth/callback", cfg.base_url)
+    cfg.redirect_uri.clone()
 }
 
 async fn exchange_code(cfg: &DropboxConfig, code: &str) -> Result<DropboxTokenResponse, Error> {
@@ -654,8 +654,8 @@ mod tests {
             "/Logs/Trips"
         );
         assert_eq!(
-            normalize_root_path("/OBD Fusion/CsvLogs/").unwrap(),
-            "/OBD Fusion/CsvLogs"
+            normalize_root_path("/Apps/OBD Fusion/CsvLogs/").unwrap(),
+            "/Apps/OBD Fusion/CsvLogs"
         );
         assert!(normalize_root_path("").is_err());
         assert!(normalize_root_path("Logs").is_err());
@@ -674,9 +674,10 @@ mod tests {
             app_key: "app-key".into(),
             app_secret: "secret".into(),
             base_url: "http://localhost:8080".into(),
+            redirect_uri: "http://localhost:8080/api/dropbox/oauth/callback".into(),
             token_encryption_key: key(1),
             poll_sec: 60,
-            root_path: "/OBD Fusion/CsvLogs",
+            root_path: "/Apps/OBD Fusion/CsvLogs",
         };
         let url = authorize_url(&cfg, "state123").unwrap();
         assert!(url.contains("client_id=app-key"));
@@ -691,7 +692,7 @@ mod tests {
         let response = connection_response(None, None);
         assert!(!response.enabled);
         assert!(!response.connected);
-        assert_eq!(response.root_path, "/OBD Fusion/CsvLogs");
+        assert_eq!(response.root_path, "/Apps/OBD Fusion/CsvLogs");
         assert_eq!(response.sync_state, "idle");
     }
 }

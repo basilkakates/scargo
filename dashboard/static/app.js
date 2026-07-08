@@ -5,7 +5,6 @@ const API = '/api';
 const USER_UNIT_STORAGE = 'scargo.displayUnits';
 const THEME_STORAGE = 'scargo.theme';
 const GUEST_CONSENT_STORAGE = 'scargo.guestConsent';
-const FLASH_UPLOAD_TOKEN_STORAGE = 'scargo.flashUploadToken';
 const INITIAL_CHART_LIMIT = 12;
 const COLORS  = ['#9b6cff','#66df7c','#ffcb45','#4fc3ff','#ff625d','#d5dbe6','#7ee787','#f2cc60','#bc8cff','#39c5cf','#ffb86b','#8bd5ca','#c6a0f6','#ed8796','#79c0ff','#56d364','#e5534b','#db6d28','#d2a8ff','#ffa198'];
 const DATE_FORMAT = new Intl.DateTimeFormat([], { year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -50,20 +49,6 @@ function setGuestConsent(enabled) {
   } else {
     sessionStorage.removeItem(GUEST_CONSENT_STORAGE);
   }
-}
-
-function stashFlashUploadToken(token) {
-  if (token) {
-    sessionStorage.setItem(FLASH_UPLOAD_TOKEN_STORAGE, token);
-  } else {
-    sessionStorage.removeItem(FLASH_UPLOAD_TOKEN_STORAGE);
-  }
-}
-
-function consumeFlashUploadToken() {
-  const token = sessionStorage.getItem(FLASH_UPLOAD_TOKEN_STORAGE) || '';
-  sessionStorage.removeItem(FLASH_UPLOAD_TOKEN_STORAGE);
-  return token;
 }
 
 function applyTheme(theme) {
@@ -281,11 +266,6 @@ function setUploadStatus(text, kind = '') {
   status.className = kind;
 }
 
-function setTokenStatus(text) {
-  const status = document.getElementById('token-status');
-  if (status) status.textContent = text;
-}
-
 function updateChromeState() {
   const profileUser = document.getElementById('profile-user-key');
   if (profileUser) profileUser.textContent = accountLabel();
@@ -381,8 +361,6 @@ function setAccount(account) {
   if (signInButton) signInButton.style.display = isSignedInAccount() ? 'none' : '';
   const logoutButton = document.getElementById('logout-btn');
   if (logoutButton) logoutButton.style.display = isSignedInAccount() ? '' : 'none';
-  const tokenControls = document.getElementById('token-controls');
-  if (tokenControls) tokenControls.style.display = isSignedInAccount() ? '' : 'none';
   updateChromeState();
 }
 
@@ -414,33 +392,8 @@ async function logout() {
     await apiPostJson('/auth/logout');
   } finally {
     setGuestConsent(false);
-    stashFlashUploadToken('');
-    showUploadToken('');
-    setTokenStatus('');
     redirectToAuthPage();
   }
-}
-
-async function generateUploadToken() {
-  try {
-    const payload = await apiPostJson('/auth/tokens', { label: 'dashboard' });
-    showUploadToken(payload.upload_token || '');
-    setTokenStatus('Token created');
-  } catch (err) {
-    setTokenStatus(`Token failed: ${err.message}`);
-  }
-}
-
-function showUploadToken(token) {
-  const output = document.getElementById('upload-token-output');
-  if (output) output.value = token || '';
-}
-
-function copyUploadToken() {
-  const output = document.getElementById('upload-token-output');
-  if (!output?.value) return;
-  output.select();
-  navigator.clipboard?.writeText(output.value);
 }
 
 async function reloadAccountData() {
@@ -946,8 +899,6 @@ async function render() {
 // ── event wiring ─────────────────────────────────────────────
 document.getElementById('logout-btn').addEventListener('click', logout);
 document.getElementById('sign-in-btn').addEventListener('click', redirectToAuthPage);
-document.getElementById('token-btn').addEventListener('click', generateUploadToken);
-document.getElementById('copy-token-btn').addEventListener('click', copyUploadToken);
 document.getElementById('upload-form').addEventListener('submit', handleUpload);
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   await loadChannels();
@@ -1021,11 +972,6 @@ document.getElementById('load-more-btn').addEventListener('click', () => {
   resetVisibleChartLimit();
   const account = await loadAccount();
   if (!enforceDashboardAccess(account)) return;
-  const flashedToken = isSignedInAccount(account) ? consumeFlashUploadToken() : '';
-  if (flashedToken) {
-    showUploadToken(flashedToken);
-    setTokenStatus('Account created. Save this token now.');
-  }
   updateChromeState();
   checkHealth();
   syncTimeWindowControls();

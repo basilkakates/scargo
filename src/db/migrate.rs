@@ -2,29 +2,7 @@
 // TimescaleDB is required: readings are stored in a hypertable.
 
 use crate::db::Database;
-use crate::ingest::canonical;
 use crate::Error;
-
-const RESET_DDL: &[&str] = &[
-    "DROP MATERIALIZED VIEW IF EXISTS obd2_metric_hourly;",
-    "DROP TABLE IF EXISTS vehicle_metric_day;",
-    "DROP TABLE IF EXISTS obd2_metric_reading;",
-    "DROP TABLE IF EXISTS dropbox_ingest_file;",
-    "DROP TABLE IF EXISTS dropbox_oauth_state;",
-    "DROP TABLE IF EXISTS dropbox_connection;",
-    "DROP TABLE IF EXISTS shared_ingest_file;",
-    "DROP TABLE IF EXISTS shared_ingest_source;",
-    "DROP TABLE IF EXISTS vin_decode_cache;",
-    "DROP TABLE IF EXISTS account_vehicle_upload;",
-    "DROP TABLE IF EXISTS account_vehicle_profile;",
-    "DROP TABLE IF EXISTS ingest_upload;",
-    "DROP TABLE IF EXISTS vehicle_ownership;",
-    "DROP TABLE IF EXISTS obd2_metric;",
-    "DROP TABLE IF EXISTS account_api_token;",
-    "DROP TABLE IF EXISTS account_session;",
-    "DROP TABLE IF EXISTS account;",
-    "DROP TABLE IF EXISTS vehicle;",
-];
 
 const CORE_DDL: &[&str] = &[
     "CREATE EXTENSION IF NOT EXISTS timescaledb;",
@@ -54,14 +32,6 @@ const CORE_DDL: &[&str] = &[
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         expires_at TIMESTAMPTZ NOT NULL
     );",
-    "CREATE TABLE IF NOT EXISTS account_api_token (
-        token_hash   TEXT PRIMARY KEY,
-        account_id   UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-        label        TEXT NOT NULL DEFAULT '',
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_used_at TIMESTAMPTZ,
-        revoked_at   TIMESTAMPTZ
-    );",
     "CREATE TABLE IF NOT EXISTS ingest_upload (
         id            UUID PRIMARY KEY,
         vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
@@ -79,7 +49,7 @@ const CORE_DDL: &[&str] = &[
         id                      UUID PRIMARY KEY,
         account_id              UUID NOT NULL UNIQUE REFERENCES account(id) ON DELETE CASCADE,
         dropbox_account_id      TEXT NOT NULL,
-        root_path               TEXT NOT NULL DEFAULT '/OBD Fusion/CsvLogs',
+        root_path               TEXT NOT NULL DEFAULT '/Apps/OBD Fusion/CsvLogs',
         encrypted_refresh_token TEXT NOT NULL,
         cursor                  TEXT,
         status                  TEXT NOT NULL DEFAULT 'active',
@@ -209,9 +179,6 @@ const RUNTIME_DDL: &[&str] = &[
         ON ingest_upload (vehicle_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_account_session_account_expires
         ON account_session (account_id, expires_at DESC);",
-    "CREATE INDEX IF NOT EXISTS idx_account_api_token_account
-        ON account_api_token (account_id, created_at DESC)
-        WHERE revoked_at IS NULL;",
     "CREATE INDEX IF NOT EXISTS idx_dropbox_connection_status
         ON dropbox_connection (status, sync_state, updated_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_dropbox_oauth_state_account_expires
@@ -245,88 +212,11 @@ const RUNTIME_DDL: &[&str] = &[
         WITH NO DATA;",
 ];
 
-const ANALYZE_SQL: &[&str] = &[
-    "ANALYZE vehicle;",
-    "ANALYZE account;",
-    "ANALYZE account_session;",
-    "ANALYZE account_api_token;",
-    "ANALYZE dropbox_connection;",
-    "ANALYZE dropbox_oauth_state;",
-    "ANALYZE dropbox_ingest_file;",
-    "ANALYZE ingest_upload;",
-    "ANALYZE account_vehicle_profile;",
-    "ANALYZE account_vehicle_upload;",
-    "ANALYZE obd2_metric;",
-    "ANALYZE obd2_metric_reading;",
-    "ANALYZE vehicle_metric_day;",
-];
-
 pub async fn run(db: &Database) -> Result<(), Error> {
     bootstrap(db, CORE_DDL).await?;
     bootstrap(db, RUNTIME_DDL).await?;
     tracing::info!("Database runtime bootstrap complete");
     Ok(())
-}
-
-pub async fn rebuild_for_bulk_load(db: &Database) -> Result<(), Error> {
-    let client = db.get().await?;
-    for sql in RESET_DDL {
-        execute(&client, sql).await?;
-    }
-    drop(client);
-    bootstrap(db, CORE_DDL).await?;
-    tracing::info!("Database bulk-load bootstrap complete");
-    Ok(())
-}
-
-pub async fn finalize_bulk_load(db: &Database) -> Result<(), Error> {
-    let client = db.get().await?;
-    execute(&client, "TRUNCATE TABLE vehicle_metric_day;").await?;
-    let rollup_sql = rollup_sql();
-    execute(&client, &rollup_sql).await?;
-    for sql in RUNTIME_DDL {
-        execute(&client, sql).await?;
-    }
-    for sql in ANALYZE_SQL {
-        execute(&client, sql).await?;
-    }
-    tracing::info!("Database bulk-load finalize complete");
-    Ok(())
-}
-
-fn rollup_sql() -> String {
-    let keys = canonical::rollup_metric_keys();
-    let key_list = keys
-        .iter()
-        .map(|key| sql_string_literal(key))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let duplicate_pattern = keys.join("|");
-
-    format!(
-        "INSERT INTO vehicle_metric_day
-    (bucket_day, upload_id, vehicle_id, metric_id, value_sum, min_value, max_value, reading_count)
-SELECT date_trunc('day', r.time) AS bucket_day,
-       r.upload_id,
-       r.vehicle_id,
-       r.metric_id,
-       SUM(r.value) AS value_sum,
-       MIN(r.value) AS min_value,
-       MAX(r.value) AS max_value,
-       COUNT(*)::BIGINT AS reading_count
-FROM obd2_metric_reading r
-JOIN obd2_metric m ON m.id = r.metric_id
-WHERE r.value IS NOT NULL
-  AND (
-      m.key = ANY(ARRAY[{key_list}]::text[])
-      OR m.key ~ '^({duplicate_pattern})_[0-9]+$'
-  )
-GROUP BY 1, 2, 3, 4;"
-    )
-}
-
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 async fn bootstrap(db: &Database, ddl: &[&str]) -> Result<(), Error> {
@@ -362,17 +252,5 @@ mod tests {
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_ingest_file"));
         assert!(ddl.contains("sync_state"));
         assert!(runtime.contains("idx_dropbox_connection_status"));
-    }
-
-    #[test]
-    fn bulk_rollup_sql_uses_public_allowlist() {
-        let sql = super::rollup_sql();
-
-        assert!(sql.contains("JOIN obd2_metric"));
-        assert!(sql.contains("'vehicle_speed'"));
-        assert!(sql.contains("vehicle_speed"));
-        assert!(sql.contains("_[0-9]+"));
-        assert!(!sql.contains("'latitude'"));
-        assert!(!sql.contains("'accel_x'"));
     }
 }

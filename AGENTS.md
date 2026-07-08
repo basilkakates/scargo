@@ -51,7 +51,7 @@ scargo/
 │   │   └── vin.rs      # Small offline VIN year/common-WMI make decoder
 │   └── api/
 │       ├── mod.rs      # Declares submodules: auth, channels, ingest, latest, privacy, routes, summary, trends, vehicles
-│       ├── auth.rs     # POST/GET /api/auth/* login, session, and upload token routes
+│       ├── auth.rs     # POST/GET /api/auth/* login and session routes
 │       ├── routes.rs   # configure() — wires /api routes
 │       ├── channels.rs # GET  /api/channels — dashboard channel registry
 │       ├── cohort.rs   # GET  /api/analysis/cohort/{channel} — aggregate comparisons
@@ -74,8 +74,6 @@ scargo/
 │   ├── fetch-vin-decodes.py # Offline NHTSA vPIC fetcher for ignored VIN decode cache rows
 │   ├── rollup-retention-report.py # Raw vs daily footprint and cohort coverage report
 │   ├── reset-dev-db.sh # Destructive local Compose DB reset without re-upload
-│   ├── scan-and-ingest.py # Incremental HTTP watcher for drop folders
-│   ├── local-auth.py # Local register/login helper that prints an upload token
 │   └── smoke-docker.sh # Starts Compose DB and runs the smoke test
 └── tests/
     └── smoke_stack.rs  # Ignored smoke test against a running Compose DB
@@ -115,6 +113,8 @@ Dropbox app folder. Configure `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`,
 stores encrypted refresh tokens plus Dropbox cursors, downloads only new CSV
 revisions from the selected folder, and does not retain CSV or ZIP artifacts
 outside the database.
+Set `SCARGO_DROPBOX_REDIRECT_URI` only when the exact registered Dropbox
+callback URI differs from `SCARGO_BASE_URL + /api/dropbox/oauth/callback`.
 
 ### Build & run
 ```bash
@@ -129,8 +129,8 @@ then run `cargo test --test smoke_stack -- --ignored --nocapture`. The ignored
 smoke test assumes the Postgres service is already running, creates a disposable
 `scargo_smoke_*` database through `SCARGO_SMOKE_ADMIN_DB` (default `postgres`),
 starts Scargo on port `18080`, checks health and API paths, ingests a tiny CSV,
-verifies stored dashboard data, then drops the temporary database and test
-drop-root. It reads ignored `.env.smoke` credentials when present and removes
+verifies stored dashboard data, then drops the temporary database. It reads
+ignored `.env.smoke` credentials when present and removes
 `SCARGO_DATABASE_URL` from child processes so it cannot target a live app DB by
 accident. This is the primary check for "builds and runs against a real
 database"; it does not depend on GitLab CI, GitHub Actions, shell scripts,
@@ -148,7 +148,6 @@ Core tables:
 | `vehicle` (table) | Vehicle registry: id (UUID PK), vin (unique), make, model, engine_family, year, created_at, updated_at |
 | `account` (table) | User account registry: username, display name, password hash, guest flag |
 | `account_session` (table) | Hashed dashboard session cookies with expiry |
-| `account_api_token` (table) | Hashed upload API tokens for scripts and direct ingest |
 | `ingest_upload` (table) | Vehicle+content hash de-duplication plus approval timestamps for public exact-VIN and cohort sharing |
 | `account_vehicle_profile` (table) | Per-account default sharing preference for a vehicle's exact-VIN public stats |
 | `account_vehicle_upload` (table) | Per-account link to uploads, including private-access state and exact-VIN sharing flag |
@@ -184,11 +183,10 @@ time indexes.
 | POST | `/api/vehicles/{vehicle_id}/approve-exact-vin-sharing` | Dev/test-only manual approval for this account's currently linked exact-VIN public uploads |
 | POST | `/api/vehicles/{vehicle_id}/approve-cohort-sharing` | Dev/test-only manual approval for this account's currently linked cohort public uploads |
 | DELETE | `/api/vehicles/{vehicle_id}` | Remove this account's private access to a vehicle while leaving already approved public stats intact |
-| POST | `/api/auth/register` | Create account, set session cookie, and return one upload token |
+| POST | `/api/auth/register` | Create account and set session cookie |
 | POST | `/api/auth/login` | Verify username/password and set session cookie |
 | POST | `/api/auth/logout` | Clear current session |
 | GET | `/api/auth/me` | Current account or dev/test guest fallback, plus `capabilities.approve_pending_public_stats` |
-| POST | `/api/auth/tokens` | Create an upload API token for the logged-in account |
 | POST | `/api/ingest/csv?vin=VIN` | Upload live OBD CSV export body → `{"rows_ingested": N}` or `400` on metric value-kind conflict |
 | POST | `/api/dropbox/oauth/start` | Start Dropbox OAuth for the current signed-in non-guest account |
 | GET | `/api/dropbox/oauth/callback` | Finish Dropbox OAuth and store the encrypted refresh token |
@@ -205,8 +203,7 @@ time indexes.
 | GET | `/api/analysis/latest/{vehicle_id}` | 50 most recent readings for a vehicle |
 | GET | `/api/public/vehicle/{vin}` | Approval-gated exact-VIN public aggregates sourced from shared daily rollups only |
 
-Account scoping uses an HttpOnly dashboard session cookie or
-`Authorization: Bearer` upload API token. Dev/test mode falls back to the
+Account scoping uses an HttpOnly dashboard session cookie. Dev/test mode falls back to the
 deterministic `guest`/`local-dev` account when no credential is supplied;
 production disables that fallback unless `SCARGO_ENABLE_GUEST=true`. Deprecated
 `X-Scargo-User-Key` is accepted only as a dev/test fallback. Raw vehicle reads
@@ -224,8 +221,8 @@ cannot use those approval routes.
 
 The ingest parser accepts VIN-scoped OBD CSV exports. The common live shape is
 first line `StartTime`, optional metadata rows, sensor headers, then rows keyed
-by elapsed seconds. VIN is supplied by `?vin=...` or by the watcher directory
-name, not by a CSV column.
+by elapsed seconds. VIN is supplied by `?vin=...` from the dashboard upload or
+by the Dropbox folder name, not by a CSV column.
 
 ```csv
 # StartTime = 03/27/2026 06:54:01.3973 PM
@@ -268,19 +265,11 @@ Each accepted upload gets its own `ingest_upload.id`; raw rows and daily rollups
 carry that `upload_id` so private access can be revoked per account without
 rewriting or deleting already approved public aggregates.
 
-Bulk reloads use `cargo run --bin scargo-bulk-ingest -- <drop-root> --rebuild-db`.
-The Rust bulk loader reads `<drop-root>/<vehicle-key>/*.csv`, rebuilds the
-Scargo tables when requested, writes raw rows directly without HTTP, then
-rebuilds `vehicle_metric_day` and finalizes runtime indexes/policies at the end.
-It resolves `--api-token`/`SCARGO_API_TOKEN` before loading when tokens already
-exist, otherwise dev/test rebuilds use the guest account. It continues past bad
-CSVs, prints a failure summary, and exits non-zero if any file failed.
-
 Deployed Dropbox ingestion uses one saved OAuth connection per signed-in
 non-guest account. Users manage that connection on `/dropbox.html`. Set
 `SCARGO_DROPBOX_ENABLED=true` to enable the background poller and
 `SCARGO_DROPBOX_POLL_SEC` for its interval. Dropbox sync uses
-`files/list_folder` cursors, accepts only direct `<vehicle-key>/<file>.csv`
+`files/list_folder` cursors, defaults to `/Apps/OBD Fusion/CsvLogs`, accepts only direct `<vehicle-key>/<file>.csv`
 children under the selected root, records root or nested CSV skips in
 `dropbox_ingest_file`, skips already ingested path+revision rows, and calls the
 same account-scoped CSV helper as manual uploads. Exact 17-character VIN folder
@@ -288,13 +277,9 @@ names first try a unique VIN-pattern match from existing metadata, then use the
 cached NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never
 trigger runtime metadata lookup. Refresh tokens are encrypted at rest and CSV
 bytes are discarded after ingest completes.
-
-Incremental drop-folder uploads still use `scripts/scan-and-ingest.py`. The
-watcher records successful vehicle-key+SHA-256 uploads in
-`<drop-root>/.scargo-ingest-state.json`, leaves source CSVs in place, posts raw
-CSV bytes to `/api/ingest/csv`, skips previously recorded paths before hashing,
-authenticates with `--api-token`/`SCARGO_API_TOKEN` when provided, and batches
-state-file writes with `--state-save-every N` (default 100).
+Existing connections saved with `/OBD Fusion/CsvLogs` must save
+`/Apps/OBD Fusion/CsvLogs` once on `/dropbox.html` or reconnect Dropbox; startup
+does not rewrite saved roots.
 
 For a one-time full relationship report after data is uploaded, run
 `python3 scripts/analyze-telemetry.py`. It uses `psql`, reads the same
@@ -312,8 +297,8 @@ vehicle's numeric dataset by same-sample correlation. Tune coverage with
 `--reconstruct-threshold` (default `0.98`). Outputs are
 `analysis/telemetry-reconstruction.json` and `.csv`.
 
-After a bulk reload, use `python3 scripts/rollup-retention-report.py` to inspect
-raw-vs-rollup coverage and footprint.
+Use `python3 scripts/rollup-retention-report.py` to inspect raw-vs-rollup
+coverage and footprint.
 
 Fetch and backfill public cohort metadata offline:
 
@@ -410,8 +395,6 @@ reason to roll them up or expose aggregate cohorts.
 ### Database bootstrap
 - `src/db/migrate.rs` is clean schema bootstrap for the current database shape,
   not a compatibility migration layer.
-- Destructive rebuilds for bulk reloads should recreate the current schema
-  directly instead of preserving transition logic.
 - Do not add legacy table rewrites, giant `UPDATE`s, or large dedupe work to app
   startup.
 - Large future data changes must be staged/resumable scripts under `scripts/`.
@@ -431,14 +414,14 @@ reason to roll them up or expose aggregate cohorts.
    dashboard in 10 minutes.
 
 4. **CSV-first ingest:** The initial data path is CSV files.  The ingest endpoint accepts
-   file uploads and runs the same pipeline as the CLI.  In the future, a mobile SDK will
+   dashboard uploads and Dropbox worker downloads.  In the future, a mobile SDK will
    send preprocessed readings directly to the API (new endpoint, same db tables).
 
 5. **Account boundary before full auth platform:** Dashboard auth uses a
    dedicated `/auth.html` page with username/password plus HttpOnly session
-   cookies, and upload tooling uses generated bearer tokens. Guest access is
-   for dev/test only and requires an explicit browser-side continue action
-   before `/` loads. Private raw access now lives on upload links in
+   cookies for dashboard upload and Dropbox management. Guest access is for
+   dev/test only and requires an explicit browser-side continue action before
+   `/` loads. Private raw access now lives on upload links in
    `account_vehicle_upload`, which prevents raw telemetry endpoints from
    accidentally becoming global reads while allowing public approvals to outlive
    account access.
@@ -457,11 +440,11 @@ reason to roll them up or expose aggregate cohorts.
 | `SCARGO_HTTP_HOST` | `127.0.0.1` | Bind address |
 | `SCARGO_HTTP_PORT` | `8080` | Bind port |
 | `SCARGO_ENABLE_GUEST` | dev/test enabled, production disabled | Enable or disable unauthenticated guest fallback |
-| `SCARGO_API_TOKEN` | unset | Upload token for watcher and direct bulk ingest |
 | `SCARGO_DROPBOX_ENABLED` | `false` | Enable Dropbox OAuth ingest and background polling |
 | `DROPBOX_APP_KEY` | unset | Dropbox OAuth app key; required when Dropbox ingest is enabled |
 | `DROPBOX_APP_SECRET` | unset | Dropbox OAuth app secret; required when Dropbox ingest is enabled |
-| `SCARGO_BASE_URL` | unset | Public app base URL used to build the Dropbox callback URL |
+| `SCARGO_BASE_URL` | unset | Public app base URL; default Dropbox callback = this value + `/api/dropbox/oauth/callback` |
+| `SCARGO_DROPBOX_REDIRECT_URI` | unset | Optional exact Dropbox callback override when the registered URI must use a different host or path |
 | `SCARGO_TOKEN_ENCRYPTION_KEY` | unset | 32-byte hex AES-GCM key for stored Dropbox refresh tokens |
 | `SCARGO_DROPBOX_POLL_SEC` | `3600` | Poll interval for active Dropbox connections |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
