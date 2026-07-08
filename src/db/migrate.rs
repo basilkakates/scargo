@@ -90,6 +90,34 @@ const CORE_DDL: &[&str] = &[
         ingested_at     TIMESTAMPTZ,
         CHECK (status IN ('pending', 'ingested', 'duplicate', 'skipped', 'deleted', 'error'))
     );",
+    "CREATE TABLE IF NOT EXISTS vin_decode_cache (
+        vin                  TEXT PRIMARY KEY,
+        year                 INT4 NOT NULL DEFAULT 0,
+        make                 TEXT NOT NULL DEFAULT '',
+        model                TEXT NOT NULL DEFAULT '',
+        engine_family        TEXT NOT NULL DEFAULT '',
+        powertrain           TEXT NOT NULL DEFAULT '',
+        displacement_l       TEXT NOT NULL DEFAULT '',
+        cylinders            TEXT NOT NULL DEFAULT '',
+        engine_configuration TEXT NOT NULL DEFAULT '',
+        aspiration           TEXT NOT NULL DEFAULT '',
+        body_class           TEXT NOT NULL DEFAULT '',
+        trim                 TEXT NOT NULL DEFAULT '',
+        lookup_status        TEXT NOT NULL DEFAULT 'pending',
+        source               TEXT NOT NULL DEFAULT 'vpic',
+        attempt_count        INT4 NOT NULL DEFAULT 0,
+        last_attempt_at      TIMESTAMPTZ,
+        next_retry_after     TIMESTAMPTZ,
+        latest_error         TEXT,
+        decoded_at           TIMESTAMPTZ,
+        created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (lookup_status IN ('pending', 'ok', 'incomplete', 'error'))
+    );",
+    "CREATE TABLE IF NOT EXISTS external_lookup_throttle (
+        lookup_key      TEXT PRIMARY KEY,
+        last_request_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );",
     "CREATE TABLE IF NOT EXISTS account_vehicle_profile (
         account_id    UUID NOT NULL REFERENCES account(id),
         vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
@@ -187,6 +215,8 @@ const RUNTIME_DDL: &[&str] = &[
         ON dropbox_ingest_file (connection_id, path_lower, COALESCE(rev, ''));",
     "CREATE INDEX IF NOT EXISTS idx_dropbox_ingest_file_conn_file
         ON dropbox_ingest_file (connection_id, dropbox_file_id);",
+    "CREATE INDEX IF NOT EXISTS idx_vin_decode_cache_retry
+        ON vin_decode_cache (lookup_status, next_retry_after);",
     "ALTER TABLE obd2_metric_reading SET (
         timescaledb.compress,
         timescaledb.compress_segmentby = 'vehicle_id, metric_id',
@@ -252,5 +282,14 @@ mod tests {
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_ingest_file"));
         assert!(ddl.contains("sync_state"));
         assert!(runtime.contains("idx_dropbox_connection_status"));
+    }
+
+    #[test]
+    fn vin_enrichment_tables_are_bootstrapped() {
+        let ddl = super::CORE_DDL.join("\n");
+        let runtime = super::RUNTIME_DDL.join("\n");
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS vin_decode_cache"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS external_lookup_throttle"));
+        assert!(runtime.contains("idx_vin_decode_cache_retry"));
     }
 }

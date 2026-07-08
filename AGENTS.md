@@ -48,7 +48,7 @@ scargo/
 │   │   ├── canonical.rs # Canonical metric metadata, unit conversion, display-unit options
 │   │   ├── csv.rs      # CSV reader: parses live OBD export → raw metrics → INSERT
 │   │   ├── model.rs    # RawMetricReading, ParseError, timestamp helpers
-│   │   └── vin.rs      # Small offline VIN year/common-WMI make decoder
+│   │   └── vin.rs      # Small local VIN year/common-WMI make decoder
 │   └── api/
 │       ├── mod.rs      # Declares submodules: auth, channels, ingest, latest, privacy, routes, summary, trends, vehicles
 │       ├── auth.rs     # POST/GET /api/auth/* login and session routes
@@ -70,8 +70,6 @@ scargo/
 │   └── completed/      # Completed plan folders after review and merge
 ├── scripts/
 │   ├── analyze-telemetry.py # One-time trend/relationship report (daily by default, raw opt-in)
-│   ├── backfill-vehicle-metadata.py # Offline VIN decode + override importer for model/engine_family
-│   ├── fetch-vin-decodes.py # Offline NHTSA vPIC fetcher for ignored VIN decode cache rows
 │   ├── rollup-retention-report.py # Raw vs daily footprint and cohort coverage report
 │   ├── reset-dev-db.sh # Destructive local Compose DB reset without re-upload
 │   └── smoke-docker.sh # Starts Compose DB and runs the smoke test
@@ -155,6 +153,7 @@ Core tables:
 | `dropbox_oauth_state` (table) | Short-lived hashed Dropbox OAuth state rows during browser redirect flow |
 | `dropbox_ingest_file` (table) | Per-connection Dropbox file ledger keyed by path and revision |
 | `vin_decode_cache` (table) | Cached exact-VIN NHTSA vPIC metadata and retry state |
+| `external_lookup_throttle` (table) | App-wide throttle state for official external lookup calls |
 | `obd2_metric` (table) | Global metric registry: one row per key with label, unit, and strict `value_kind` |
 | `obd2_metric_reading` (table) | Time-series raw metric values: upload_id, time, vehicle_id, metric_id, and exactly one payload column (`value` or `text_value`) |
 | `vehicle_metric_day` (table) | Durable numeric daily rollup: bucket_day, upload_id, vehicle_id, metric_id, value_sum, min_value, max_value, reading_count |
@@ -256,8 +255,13 @@ whose policy has `public_cohort=false`.
 
 The upload VIN is decoded locally for basic metadata. `src/ingest/vin.rs`
 stores the model year from the 10th VIN character and a small common WMI make
-map. `model` and `engine_family` are preserved across later ingests, then
-backfilled offline from an ignored local vPIC cache plus optional overrides.
+map. `model` and `engine_family` are preserved across later ingests. When an
+exact 17-character VIN is still missing public-cohort metadata, ingest first
+tries a unique exact VIN-pattern match from existing vehicle or decode-cache
+metadata, then uses cached NHTSA vPIC data, and only then calls vPIC if the
+per-VIN retry window and app-wide throttle allow it. Failed or incomplete vPIC
+lookups are cached and retried no more often than their `next_retry_after`
+timestamp. Non-VIN vehicle keys never trigger runtime metadata lookup.
 
 Duplicate headers are retained with stable suffixes such as
 `intake_manifold_absolute_pressure` and `intake_manifold_absolute_pressure_2`.
@@ -274,9 +278,10 @@ children under the selected root, records root or nested CSV skips in
 `dropbox_ingest_file`, skips already ingested path+revision rows, and calls the
 same account-scoped CSV helper as manual uploads. Exact 17-character VIN folder
 names first try a unique VIN-pattern match from existing metadata, then use the
-cached NHTSA vPIC path in `vin_decode_cache`; non-VIN vehicle keys never
-trigger runtime metadata lookup. Refresh tokens are encrypted at rest and CSV
-bytes are discarded after ingest completes.
+cached NHTSA vPIC path in `vin_decode_cache`, subject to per-VIN retry and
+app-wide throttle limits. Non-VIN vehicle keys never trigger runtime metadata
+lookup. Refresh tokens are encrypted at rest and CSV bytes are discarded after
+ingest completes.
 Existing connections saved with `/OBD Fusion/CsvLogs` must save
 `/Apps/OBD Fusion/CsvLogs` once on `/dropbox.html` or reconnect Dropbox; startup
 does not rewrite saved roots.
@@ -298,22 +303,10 @@ vehicle's numeric dataset by same-sample correlation. Tune coverage with
 `analysis/telemetry-reconstruction.json` and `.csv`.
 
 Use `python3 scripts/rollup-retention-report.py` to inspect raw-vs-rollup
-coverage and footprint.
-
-Fetch and backfill public cohort metadata offline:
-
-```bash
-python3 scripts/fetch-vin-decodes.py --missing-only --cache vin-decodes.csv
-python3 scripts/backfill-vehicle-metadata.py --decode-csv vin-decodes.csv --overrides overrides.csv
-```
-
-The fetch step calls the official NHTSA vPIC API only from this offline script,
-stores direct results in an ignored local VIN decode CSV, and never runs in
-ingest or request paths. Metadata backfill applies manual overrides first,
-including optional `year` fixes for demo or malformed VINs, then exact VIN
-cache hits, then conservative inference from VIN positions 1-8 plus model year
-only when that pattern resolves to one unique
-`(make, model, engine_family)` tuple.
+coverage and footprint. Vehicle metadata enrichment is automatic during ingest:
+Scargo uses local VIN structure first, then unique exact-pattern inference, then
+cached NHTSA vPIC results, and finally a throttled vPIC request only when public
+cohort metadata is still missing.
 
 ## Development conventions
 

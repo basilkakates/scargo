@@ -159,10 +159,11 @@ family and stored in canonical `m/s²`.
 
 The upload VIN is decoded locally for basic vehicle metadata. Scargo stores the
 model year from the 10th VIN character and a small common WMI-to-make map when
-available. `model` and `engine_family` are preserved across later ingests, then
-backfilled offline for public cohorts from an ignored local vPIC cache at
-an ignored local VIN decode CSV. Scargo does not call VIN services during ingest or
-request handling.
+available. `model` and `engine_family` are preserved across later ingests. For
+valid 17-character VINs that still lack public-cohort metadata, ingest tries a
+unique exact VIN-pattern match from existing data, then cached NHTSA vPIC data,
+then a throttled vPIC lookup only when needed. Failed or incomplete lookups are
+cached with a retry timestamp so uploads do not hammer the official service.
 
 Scargo also stores every non-time CSV column as an owner-scoped raw metric, even
 when it is not a known OBD channel. GPS, acceleration, status fields, duplicate
@@ -215,7 +216,8 @@ cannot manage Dropbox connections. The Dropbox path
 contract is `<vehicle-key>/<file>.csv`; root-level CSV files are recorded as
 skipped, nested CSVs are skipped for v1, and non-CSV files are ignored. Exact
 17-character VIN folders first try a unique existing VIN-pattern match from
-known metadata, then fall back to a cached NHTSA vPIC lookup during sync.
+known metadata, then fall back to cached or throttled NHTSA vPIC metadata during
+sync.
 When Dropbox rejects a token refresh, folder listing, or file download, the
 saved connection `latest_error` now includes the Dropbox HTTP status and a
 short upstream error summary when one is present.
@@ -301,21 +303,12 @@ Daily owner/public reads now flow through `vehicle_metric_day`:
 Use `python3 scripts/rollup-retention-report.py` to inspect raw-vs-rollup
 coverage and footprint.
 
-To enrich vehicles for public cohorts from an offline VIN decode export:
-
-```bash
-python3 scripts/fetch-vin-decodes.py --missing-only --cache vin-decodes.csv
-python3 scripts/backfill-vehicle-metadata.py --decode-csv vin-decodes.csv --overrides overrides.csv
-```
-
-Normalize `engine_family` to `EV`, `Hybrid`, `PHEV`, or labels such as
-`2.4L 4cyl NA`, `1.5L I4 Turbo`, and `3.5L V6 NA` when vPIC provides cylinder
-configuration. Metadata backfill applies manual overrides
-first, including optional `year` fixes for demo or malformed VINs, then exact
-VIN cache hits, then conservative inference from prior direct decode rows only
-when VIN positions 1-8 plus model year map to one unique
-`(make, model, engine_family)` result. The intended retention target is 180
-days of compressed raw rows plus indefinite daily rollups.
+Automatic VIN enrichment normalizes `engine_family` to `EV`, `Hybrid`, `PHEV`,
+or labels such as `2.4L 4cyl NA`, `1.5L I4 Turbo`, and `3.5L V6 NA` when vPIC
+provides cylinder configuration. When cylinder configuration is missing, Scargo
+keeps the conservative `6cyl` style instead of guessing `I` or `V`. The intended
+retention target is 180 days of compressed raw rows plus indefinite daily
+rollups.
 
 ## Privacy And Scaling
 

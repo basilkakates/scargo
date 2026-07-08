@@ -107,10 +107,11 @@ volume grows.
 - Keep raw telemetry compressed for recent detail only; retain durable daily
   rollups for long-term owner views and public cohorts, limited to metric-policy
   allowlisted vehicle channels.
-- Keep VIN inference conservative. Dropbox sync may reuse a unique exact
-  VIN-pattern match from known metadata for exact 17-character VIN folders, then
-  fetch from NHTSA vPIC into `vin_decode_cache` when no unique match exists. It
-  does not guess metadata for non-VIN vehicle keys.
+- Keep VIN inference conservative. Ingest reuses complete existing metadata,
+  then a unique exact VIN-pattern match for valid 17-character VINs, then cached
+  NHTSA vPIC data. It calls vPIC only when metadata is still missing and both
+  the per-VIN retry window and app-wide throttle allow it. It does not guess
+  metadata for non-VIN vehicle keys.
 - Move heavy ingest, simulation, and cohort calculations to async jobs only when
   request latency or database load requires it.
 - Use discovered correlations to reduce future client uploads to the smallest
@@ -169,9 +170,10 @@ Implemented:
   account-scoped endpoints but are excluded from public cohorts.
 - `/api/dropbox/*` lets signed-in non-guest users authorize, delete,
   pause/resume, and sync one Dropbox connection.
-- Public cohort metadata is enriched offline from ignored local NHTSA vPIC
-  cache rows, with conservative future-VIN inference only when VIN positions
-  1-8 plus model year map to one unique metadata tuple.
+- Public cohort metadata is enriched during ingest from local VIN structure,
+  exact-pattern inference, cached NHTSA vPIC rows, or throttled vPIC requests.
+  Conservative inference applies only when VIN positions 1-8 plus model year map
+  to one unique metadata tuple.
 - `/api/analysis/dashboard` returns account-scoped raw or summary series for
   dashboard charts. Summary reads use `vehicle_metric_day` for `1d`, `1w`, and
   `1mon` buckets.
