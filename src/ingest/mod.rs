@@ -3,5 +3,5 @@ pub mod csv;
 pub mod model;
 pub mod vin;
 
-pub use csv::{bulk_ingest_reader, ingest_reader, BulkMetricCache};
+pub use csv::ingest_reader;
 pub use model::vin_to_uuid;

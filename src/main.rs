@@ -42,6 +42,9 @@ async fn main() -> std::io::Result<()> {
     db::migrate::run(&db)
         .await
         .expect("Failed to run database migrations");
+    if let Some(cfg) = settings.dropbox.clone() {
+        scargo::dropbox_worker::spawn(db.clone(), cfg);
+    }
 
     let bind = format!("{}:{}", settings.http.host, settings.http.port);
     tracing::info!("Starting HTTP server on {bind}");

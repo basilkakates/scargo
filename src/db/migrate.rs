@@ -2,23 +2,7 @@
 // TimescaleDB is required: readings are stored in a hypertable.
 
 use crate::db::Database;
-use crate::ingest::canonical;
 use crate::Error;
-
-const RESET_DDL: &[&str] = &[
-    "DROP MATERIALIZED VIEW IF EXISTS obd2_metric_hourly;",
-    "DROP TABLE IF EXISTS vehicle_metric_day;",
-    "DROP TABLE IF EXISTS obd2_metric_reading;",
-    "DROP TABLE IF EXISTS account_vehicle_upload;",
-    "DROP TABLE IF EXISTS account_vehicle_profile;",
-    "DROP TABLE IF EXISTS ingest_upload;",
-    "DROP TABLE IF EXISTS vehicle_ownership;",
-    "DROP TABLE IF EXISTS obd2_metric;",
-    "DROP TABLE IF EXISTS account_api_token;",
-    "DROP TABLE IF EXISTS account_session;",
-    "DROP TABLE IF EXISTS account;",
-    "DROP TABLE IF EXISTS vehicle;",
-];
 
 const CORE_DDL: &[&str] = &[
     "CREATE EXTENSION IF NOT EXISTS timescaledb;",
@@ -48,14 +32,6 @@ const CORE_DDL: &[&str] = &[
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         expires_at TIMESTAMPTZ NOT NULL
     );",
-    "CREATE TABLE IF NOT EXISTS account_api_token (
-        token_hash   TEXT PRIMARY KEY,
-        account_id   UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
-        label        TEXT NOT NULL DEFAULT '',
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_used_at TIMESTAMPTZ,
-        revoked_at   TIMESTAMPTZ
-    );",
     "CREATE TABLE IF NOT EXISTS ingest_upload (
         id            UUID PRIMARY KEY,
         vehicle_id    UUID NOT NULL REFERENCES vehicle(id),
@@ -68,6 +44,51 @@ const CORE_DDL: &[&str] = &[
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         completed_at  TIMESTAMPTZ,
         UNIQUE (vehicle_id, content_hash)
+    );",
+    "CREATE TABLE IF NOT EXISTS dropbox_connection (
+        id                      UUID PRIMARY KEY,
+        account_id              UUID NOT NULL UNIQUE REFERENCES account(id) ON DELETE CASCADE,
+        dropbox_account_id      TEXT NOT NULL,
+        root_path               TEXT NOT NULL DEFAULT '/Apps/OBD Fusion/CsvLogs',
+        encrypted_refresh_token TEXT NOT NULL,
+        cursor                  TEXT,
+        status                  TEXT NOT NULL DEFAULT 'active',
+        sync_state              TEXT NOT NULL DEFAULT 'idle',
+        sync_requested_at       TIMESTAMPTZ,
+        sync_started_at         TIMESTAMPTZ,
+        last_sync_at            TIMESTAMPTZ,
+        last_success_at         TIMESTAMPTZ,
+        latest_error            TEXT,
+        created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (status IN ('active', 'paused', 'error')),
+        CHECK (sync_state IN ('idle', 'queued', 'running'))
+    );",
+    "CREATE TABLE IF NOT EXISTS dropbox_oauth_state (
+        state_hash    TEXT PRIMARY KEY,
+        account_id    UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        redirect_path TEXT NOT NULL,
+        root_path     TEXT NOT NULL,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at    TIMESTAMPTZ NOT NULL
+    );",
+    "CREATE TABLE IF NOT EXISTS dropbox_ingest_file (
+        id              UUID PRIMARY KEY,
+        connection_id   UUID NOT NULL REFERENCES dropbox_connection(id) ON DELETE CASCADE,
+        account_id      UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        dropbox_file_id TEXT,
+        path_lower      TEXT NOT NULL,
+        rev             TEXT,
+        content_hash    TEXT,
+        vin             TEXT,
+        upload_id       UUID REFERENCES ingest_upload(id) ON DELETE SET NULL,
+        status          TEXT NOT NULL DEFAULT 'pending',
+        rows_ingested   BIGINT NOT NULL DEFAULT 0,
+        duplicate       BOOLEAN NOT NULL DEFAULT FALSE,
+        latest_error    TEXT,
+        seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingested_at     TIMESTAMPTZ,
+        CHECK (status IN ('pending', 'ingested', 'duplicate', 'skipped', 'deleted', 'error'))
     );",
     "CREATE TABLE IF NOT EXISTS account_vehicle_profile (
         account_id    UUID NOT NULL REFERENCES account(id),
@@ -158,9 +179,14 @@ const RUNTIME_DDL: &[&str] = &[
         ON ingest_upload (vehicle_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_account_session_account_expires
         ON account_session (account_id, expires_at DESC);",
-    "CREATE INDEX IF NOT EXISTS idx_account_api_token_account
-        ON account_api_token (account_id, created_at DESC)
-        WHERE revoked_at IS NULL;",
+    "CREATE INDEX IF NOT EXISTS idx_dropbox_connection_status
+        ON dropbox_connection (status, sync_state, updated_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_dropbox_oauth_state_account_expires
+        ON dropbox_oauth_state (account_id, expires_at DESC);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_dropbox_ingest_file_conn_path_rev
+        ON dropbox_ingest_file (connection_id, path_lower, COALESCE(rev, ''));",
+    "CREATE INDEX IF NOT EXISTS idx_dropbox_ingest_file_conn_file
+        ON dropbox_ingest_file (connection_id, dropbox_file_id);",
     "ALTER TABLE obd2_metric_reading SET (
         timescaledb.compress,
         timescaledb.compress_segmentby = 'vehicle_id, metric_id',
@@ -186,85 +212,11 @@ const RUNTIME_DDL: &[&str] = &[
         WITH NO DATA;",
 ];
 
-const ANALYZE_SQL: &[&str] = &[
-    "ANALYZE vehicle;",
-    "ANALYZE account;",
-    "ANALYZE account_session;",
-    "ANALYZE account_api_token;",
-    "ANALYZE ingest_upload;",
-    "ANALYZE account_vehicle_profile;",
-    "ANALYZE account_vehicle_upload;",
-    "ANALYZE obd2_metric;",
-    "ANALYZE obd2_metric_reading;",
-    "ANALYZE vehicle_metric_day;",
-];
-
 pub async fn run(db: &Database) -> Result<(), Error> {
     bootstrap(db, CORE_DDL).await?;
     bootstrap(db, RUNTIME_DDL).await?;
     tracing::info!("Database runtime bootstrap complete");
     Ok(())
-}
-
-pub async fn rebuild_for_bulk_load(db: &Database) -> Result<(), Error> {
-    let client = db.get().await?;
-    for sql in RESET_DDL {
-        execute(&client, sql).await?;
-    }
-    drop(client);
-    bootstrap(db, CORE_DDL).await?;
-    tracing::info!("Database bulk-load bootstrap complete");
-    Ok(())
-}
-
-pub async fn finalize_bulk_load(db: &Database) -> Result<(), Error> {
-    let client = db.get().await?;
-    execute(&client, "TRUNCATE TABLE vehicle_metric_day;").await?;
-    let rollup_sql = rollup_sql();
-    execute(&client, &rollup_sql).await?;
-    for sql in RUNTIME_DDL {
-        execute(&client, sql).await?;
-    }
-    for sql in ANALYZE_SQL {
-        execute(&client, sql).await?;
-    }
-    tracing::info!("Database bulk-load finalize complete");
-    Ok(())
-}
-
-fn rollup_sql() -> String {
-    let keys = canonical::rollup_metric_keys();
-    let key_list = keys
-        .iter()
-        .map(|key| sql_string_literal(key))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let duplicate_pattern = keys.join("|");
-
-    format!(
-        "INSERT INTO vehicle_metric_day
-    (bucket_day, upload_id, vehicle_id, metric_id, value_sum, min_value, max_value, reading_count)
-SELECT date_trunc('day', r.time) AS bucket_day,
-       r.upload_id,
-       r.vehicle_id,
-       r.metric_id,
-       SUM(r.value) AS value_sum,
-       MIN(r.value) AS min_value,
-       MAX(r.value) AS max_value,
-       COUNT(*)::BIGINT AS reading_count
-FROM obd2_metric_reading r
-JOIN obd2_metric m ON m.id = r.metric_id
-WHERE r.value IS NOT NULL
-  AND (
-      m.key = ANY(ARRAY[{key_list}]::text[])
-      OR m.key ~ '^({duplicate_pattern})_[0-9]+$'
-  )
-GROUP BY 1, 2, 3, 4;"
-    )
-}
-
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 async fn bootstrap(db: &Database, ddl: &[&str]) -> Result<(), Error> {
@@ -292,23 +244,13 @@ mod tests {
     }
 
     #[test]
-    fn account_tables_are_bootstrapped() {
+    fn dropbox_tables_are_bootstrapped() {
         let ddl = super::CORE_DDL.join("\n");
         let runtime = super::RUNTIME_DDL.join("\n");
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS account"));
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS account_api_token"));
-        assert!(runtime.contains("idx_account_api_token_account"));
-    }
-
-    #[test]
-    fn bulk_rollup_sql_uses_public_allowlist() {
-        let sql = super::rollup_sql();
-
-        assert!(sql.contains("JOIN obd2_metric"));
-        assert!(sql.contains("'vehicle_speed'"));
-        assert!(sql.contains("vehicle_speed"));
-        assert!(sql.contains("_[0-9]+"));
-        assert!(!sql.contains("'latitude'"));
-        assert!(!sql.contains("'accel_x'"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_connection"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_oauth_state"));
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS dropbox_ingest_file"));
+        assert!(ddl.contains("sync_state"));
+        assert!(runtime.contains("idx_dropbox_connection_status"));
     }
 }

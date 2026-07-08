@@ -2,6 +2,7 @@ pub mod auth;
 pub mod channels;
 pub mod cohort;
 pub mod dashboard;
+pub mod dropbox;
 pub mod ingest;
 pub mod latest;
 pub mod pairs;

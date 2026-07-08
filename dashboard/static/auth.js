@@ -1,7 +1,6 @@
 const API = '/api';
 const THEME_STORAGE = 'scargo.theme';
 const GUEST_CONSENT_STORAGE = 'scargo.guestConsent';
-const FLASH_UPLOAD_TOKEN_STORAGE = 'scargo.flashUploadToken';
 
 let authMode = 'login';
 let guestAvailable = false;
@@ -29,14 +28,6 @@ function setGuestConsent(enabled) {
     sessionStorage.setItem(GUEST_CONSENT_STORAGE, '1');
   } else {
     sessionStorage.removeItem(GUEST_CONSENT_STORAGE);
-  }
-}
-
-function stashFlashUploadToken(token) {
-  if (token) {
-    sessionStorage.setItem(FLASH_UPLOAD_TOKEN_STORAGE, token);
-  } else {
-    sessionStorage.removeItem(FLASH_UPLOAD_TOKEN_STORAGE);
   }
 }
 
@@ -110,7 +101,6 @@ async function handleAuth(event) {
   try {
     const payload = await apiPostJson(`/auth/${authMode}`, { username, password });
     setGuestConsent(false);
-    stashFlashUploadToken(payload.upload_token || '');
     redirectToDashboard();
   } catch (err) {
     setStatus('auth-status', `Auth failed: ${err.message}`, 'err');
@@ -122,7 +112,6 @@ async function handleAuth(event) {
 function continueAsGuest() {
   if (!guestAvailable) return;
   setGuestConsent(true);
-  stashFlashUploadToken('');
   redirectToDashboard();
 }
 

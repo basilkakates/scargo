@@ -1,6 +1,5 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -24,7 +23,7 @@ fn smoke_existing_database_connects_ingests_and_reads() {
     wait_for_health(&mut app);
 
     assert_contains(&http_get("/api/health", ""), "\"ok\"");
-    let (cookie, token) = register_smoke_user("existing");
+    let cookie = register_smoke_user("existing");
     http_get("/api/channels", &cookie_header(&cookie));
 
     let vin = format!("DEMO-HONDA-ACCORD-{}", std::process::id());
@@ -38,7 +37,7 @@ Time (sec),Engine RPM (RPM),Vehicle speed (MPH)
         &http_post(
             &format!("/api/ingest/csv?vin={vin}"),
             csv,
-            &bearer_header(&token),
+            &format!("{}Content-Type: text/csv\r\n", cookie_header(&cookie)),
         ),
         "\"rows_ingested\":",
     );
@@ -56,52 +55,6 @@ Time (sec),Engine RPM (RPM),Vehicle speed (MPH)
             &cookie_header(&cookie),
         ),
         "engine_rpm",
-    );
-}
-
-#[test]
-#[ignore = "requires a running Postgres/TimescaleDB service"]
-fn smoke_bulk_rebuild_ingests_and_serves_summary() {
-    let _guard = smoke_lock().lock().expect("smoke lock");
-    let _ = dotenvy::from_filename(".env");
-    let _ = dotenvy::from_filename(".env.smoke");
-    let db = SmokeDatabase::create("bulk");
-    let drop_root = TempDropRoot::create();
-    std::fs::create_dir_all(drop_root.path().join("DEMO-HONDA-ACCORD")).expect("vehicle dir");
-    std::fs::write(
-        drop_root.path().join("DEMO-HONDA-ACCORD/good.csv"),
-        "\
-# StartTime = 03/27/2026 06:54:01.3973 PM
-Time (sec),Engine RPM (RPM),Vehicle speed (MPH)
-0.0,800,0
-1.0,900,10
-",
-    )
-    .expect("good csv");
-    std::fs::write(
-        drop_root.path().join("DEMO-HONDA-ACCORD/bad.csv"),
-        "not,a,valid,obd,csv\n",
-    )
-    .expect("bad csv");
-
-    let status = Command::new(env!("CARGO_BIN_EXE_scargo-bulk-ingest"))
-        .arg(drop_root.path().as_os_str())
-        .arg("--rebuild-db")
-        .env_remove("SCARGO_DATABASE_URL")
-        .env("SCARGO_ENV", "dev")
-        .env("POSTGRES_HOST", env_or("POSTGRES_HOST", "127.0.0.1"))
-        .env("POSTGRES_PORT", env_or("POSTGRES_PORT", DEFAULT_DB_PORT))
-        .env("POSTGRES_USER", env_or("POSTGRES_USER", "scargo"))
-        .env("POSTGRES_DB", db.name())
-        .status()
-        .expect("run bulk ingest");
-    assert!(!status.success(), "expected non-zero exit for bad.csv");
-
-    let mut app = App::start(&db);
-    wait_for_health(&mut app);
-    assert_contains(
-        &http_get("/api/analysis/summary/engine_rpm?bucket=1d&limit=10", ""),
-        "\"count\":2",
     );
 }
 
@@ -253,7 +206,7 @@ fn wait_for_health(app: &mut App) {
     panic!("timed out waiting for scargo health");
 }
 
-fn register_smoke_user(suffix: &str) -> (String, String) {
+fn register_smoke_user(suffix: &str) -> String {
     let username = format!("smoke_{suffix}_{}", std::process::id());
     let body = format!(r#"{{"username":"{username}","password":"smoke-password"}}"#);
     let response = http_post(
@@ -261,14 +214,7 @@ fn register_smoke_user(suffix: &str) -> (String, String) {
         &body,
         "Content-Type: application/json\r\n",
     );
-    let cookie = extract_cookie(&response);
-    let payload: serde_json::Value =
-        serde_json::from_str(response_body(&response)).expect("register json");
-    let token = payload["upload_token"]
-        .as_str()
-        .expect("upload token")
-        .to_string();
-    (cookie, token)
+    extract_cookie(&response)
 }
 
 fn http_get(path: &str, auth_header: &str) -> String {
@@ -301,10 +247,6 @@ fn cookie_header(cookie: &str) -> String {
     format!("Cookie: {cookie}\r\n")
 }
 
-fn bearer_header(token: &str) -> String {
-    format!("Authorization: Bearer {token}\r\nContent-Type: text/csv\r\n")
-}
-
 fn extract_cookie(response: &str) -> String {
     response
         .lines()
@@ -315,13 +257,6 @@ fn extract_cookie(response: &str) -> String {
         .and_then(|value| value.split(';').next())
         .expect("set-cookie header")
         .to_string()
-}
-
-fn response_body(response: &str) -> &str {
-    response
-        .split_once("\r\n\r\n")
-        .map(|(_, body)| body)
-        .unwrap_or("")
 }
 
 fn http_port() -> u16 {
@@ -339,37 +274,6 @@ fn assert_contains(haystack: &str, needle: &str) {
         haystack.contains(needle),
         "missing {needle:?} in response:\n{haystack}"
     );
-}
-
-struct TempDropRoot {
-    path: PathBuf,
-}
-
-impl TempDropRoot {
-    fn create() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "scargo-bulk-smoke-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock")
-                .as_millis()
-        ));
-        if path.exists() {
-            let _ = std::fs::remove_dir_all(&path);
-        }
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDropRoot {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
 }
 
 fn smoke_lock() -> &'static Mutex<()> {

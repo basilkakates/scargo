@@ -162,7 +162,7 @@ pub async fn ingest_csv_for_account(
     })
 }
 
-fn packet_hash(body: &[u8]) -> String {
+pub(crate) fn packet_hash(body: &[u8]) -> String {
     let digest = Sha256::digest(body);
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
