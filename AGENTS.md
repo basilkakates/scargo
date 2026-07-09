@@ -18,9 +18,10 @@ web dashboard.  Built for performance and simplicity.
 ```
 scargo/
 ├── Cargo.toml          # Deps: actix-web, deadpool-postgres, tokio-postgres, csv, chrono, uuid, …
+├── Dockerfile          # Multi-stage production image for the Scargo web app
 ├── AGENTS.md           # ← YOU ARE HERE
 ├── README.md           # Human-facing overview + setup
-├── compose.yaml        # Local TimescaleDB/PostgreSQL service
+├── compose.yaml        # Local TimescaleDB service plus optional app profile
 ├── docs/
 │   ├── dashboard-creative-direction.md # Dashboard visual system
 │   ├── deployment-options.md # Production database/app-hosting options
@@ -133,6 +134,17 @@ callback URI differs from `SCARGO_BASE_URL + /api/dropbox/oauth/callback`.
 cargo build --release
 ./target/release/scargo
 ```
+
+### Container build & run
+```bash
+docker build -t scargo:local .
+docker compose --profile app up --build scargo
+```
+
+The Compose `app` profile runs Scargo beside `scargo_db`, binds the container to
+`SCARGO_HTTP_HOST=0.0.0.0`, and reaches the database through
+`POSTGRES_HOST=scargo_db`. `docker compose up -d scargo_db` remains the default
+DB-only local development workflow.
 
 The web dashboard is at `http://localhost:8080/`.  The health check is at `http://localhost:8080/api/health`.
 

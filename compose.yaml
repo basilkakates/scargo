@@ -12,6 +12,39 @@ services:
             - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
         networks:
             - network
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U $${POSTGRES_USER:-scargo} -d $${POSTGRES_DB:-scargo}",
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+
+    scargo:
+        profiles:
+            - app
+        build:
+            context: .
+        image: scargo:local
+        restart: unless-stopped
+        environment:
+            SCARGO_ENV: dev
+            SCARGO_HTTP_HOST: 0.0.0.0
+            SCARGO_HTTP_PORT: 8080
+            POSTGRES_HOST: scargo_db
+            POSTGRES_PORT: 5432
+            POSTGRES_USER: ${POSTGRES_USER:-scargo}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in ignored .env}
+            POSTGRES_DB: ${POSTGRES_DB:-scargo}
+        ports:
+            - "${SCARGO_BIND:-127.0.0.1}:${SCARGO_HTTP_PORT:-8080}:8080"
+        depends_on:
+            scargo_db:
+                condition: service_healthy
+        networks:
+            - network
 
 volumes:
     data:

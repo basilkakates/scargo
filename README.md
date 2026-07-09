@@ -24,6 +24,18 @@ cargo run --release
 # Dashboard at http://localhost:8080
 ```
 
+To build and run the app as a local container beside the Compose database:
+
+```bash
+docker build -t scargo:local .
+docker compose --profile app up --build scargo
+# Dashboard at http://localhost:8080
+```
+
+The `app` profile sets `SCARGO_HTTP_HOST=0.0.0.0` inside the container and uses
+`POSTGRES_HOST=scargo_db` on the Compose network. The default DB-only workflow
+above is unchanged.
+
 For a local smoke check against the Compose database, run:
 
 ```bash
