@@ -12,17 +12,27 @@ preprocessed sensor set once derived metrics are proven.
 ## Quick Start
 
 ```bash
-# 1. Start the database
-docker compose up -d scargo_db
-
-# Optional without Docker: create a TimescaleDB-backed local DB
-# createdb scargo
-# psql scargo -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
-
-# 2. Run
-cargo run --release
+# Start the Compose DB and run the app from the host
+scripts/dev.sh
 # Dashboard at http://localhost:8080
 ```
+
+`scripts/dev.sh` loads ignored `.env` overrides, refuses
+`SCARGO_ENV=production`, unsets `SCARGO_DATABASE_URL` so it cannot target an
+external app database, points the host app at `127.0.0.1`, supplies a local
+default `POSTGRES_PASSWORD` when none is set, starts `scargo_db`, waits for
+readiness, then runs `cargo run`. After code changes, stop the command and
+rerun it.
+
+The equivalent manual loop is:
+
+```bash
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-scargo}" docker compose up -d scargo_db
+cargo run
+```
+
+Optional without Docker: create a TimescaleDB-backed local DB with `createdb
+scargo` and `psql scargo -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"`.
 
 To build and run the app as a local container beside the Compose database:
 
@@ -53,7 +63,8 @@ temporary database. It ignores `SCARGO_DATABASE_URL` so smoke
 runs cannot target a live application database by accident. It does not require
 GitLab CI, GitHub Actions, `curl`, or repository secrets.
 
-`scripts/reset-dev-db.sh` is destructive to the local Compose volume only.
+`scripts/reset-dev-db.sh` is destructive to the local Compose volume only and is
+separate from the normal dev run helper.
 CSV ingest is exposed through the dashboard upload form and the Dropbox worker;
 there are no local drop-folder ingest helpers.
 

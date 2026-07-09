@@ -84,6 +84,7 @@ scargo/
 │   └── completed/      # Completed plan folders after review and merge
 ├── scripts/
 │   ├── analyze-telemetry.py # One-time trend/relationship report (daily by default, raw opt-in)
+│   ├── dev.sh # Starts Compose DB and runs host cargo dev server
 │   ├── rollup-retention-report.py # Raw vs daily footprint and cohort coverage report
 │   ├── reset-dev-db.sh # Destructive local Compose DB reset without re-upload
 │   └── smoke-docker.sh # Starts Compose DB and runs the smoke test
@@ -130,6 +131,24 @@ callback URI differs from `SCARGO_BASE_URL + /api/dropbox/oauth/callback`.
 `SCARGO_DROPBOX_POLL_SEC` defaults to 300 seconds.
 
 ### Build & run
+For local development, use the host-run app plus Compose-managed DB loop:
+```bash
+scripts/dev.sh
+```
+
+`scripts/dev.sh` loads ignored `.env` overrides, refuses
+`SCARGO_ENV=production`, unsets `SCARGO_DATABASE_URL` so it cannot target an
+external app database, points the host app at `127.0.0.1`, supplies a local
+default `POSTGRES_PASSWORD` when none is set, starts `scargo_db`, waits for
+readiness, then runs `cargo run`. After code changes, stop and rerun it. The
+equivalent manual loop is
+`POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-scargo}" docker compose up -d scargo_db`
+followed by `cargo run`.
+
+`scripts/reset-dev-db.sh` remains the separate destructive reset for the local
+Compose volume only.
+
+For a release binary:
 ```bash
 cargo build --release
 ./target/release/scargo
