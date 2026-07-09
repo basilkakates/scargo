@@ -87,6 +87,8 @@ ingest is enabled, production also needs `DROPBOX_APP_KEY`,
 `SCARGO_TOKEN_ENCRYPTION_KEY` so refresh tokens stay encrypted at rest. Runtime
 config is environment-only: use `SCARGO_*` for app settings and `POSTGRES_*`
 for the dev database fallback. See `.env.example` for placeholder settings.
+The production deploy runbook lives in
+[docs/deployment.md](docs/deployment.md).
 Set `SCARGO_DROPBOX_REDIRECT_URI` only when Dropbox must redirect to an exact
 host or path that differs from `SCARGO_BASE_URL + /api/dropbox/oauth/callback`.
 Dropbox ingest uses Full Dropbox OAuth because OBD Fusion writes exports into
@@ -112,6 +114,8 @@ The dashboard visual system follows the Scargo creative direction documented in
 
 The hosted-beta roadmap and active task plan index live in
 [docs/roadmap.md](docs/roadmap.md).
+Production deployment steps live in
+[docs/deployment.md](docs/deployment.md).
 
 ## Tech Stack
 

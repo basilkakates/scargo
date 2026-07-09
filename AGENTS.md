@@ -24,6 +24,7 @@ scargo/
 ├── compose.yaml        # Local TimescaleDB service plus optional app profile
 ├── docs/
 │   ├── dashboard-creative-direction.md # Dashboard visual system
+│   ├── deployment.md # Production deploy, verify, rollback runbook
 │   ├── deployment-options.md # Production database/app-hosting options
 │   ├── metric-policy.md # Metric categories, privacy, rollup/public policy
 │   ├── monetization-strategy.md # Product and revenue direction
@@ -31,7 +32,7 @@ scargo/
 │   └── roadmap.md # Hosted-beta direction and active plan index
 ├── .github/
 │   └── workflows/
-│       └── ci.yml # Rust CI checks
+│       └── ci.yml # Rust CI checks plus production image build
 ├── dashboard/
 │   └── static/
 │       ├── auth.html  # Dedicated login/create-account page for dashboard entry
@@ -164,6 +165,10 @@ The Compose `app` profile runs Scargo beside `scargo_db`, binds the container to
 `SCARGO_HTTP_HOST=0.0.0.0`, and reaches the database through
 `POSTGRES_HOST=scargo_db`. `docker compose up -d scargo_db` remains the default
 DB-only local development workflow.
+
+Production deployment, health verification, log checks, Dropbox redirect setup,
+database backup/restore expectations, image rebuilds, and rollback steps live in
+`docs/deployment.md`.
 
 The web dashboard is at `http://localhost:8080/`.  The health check is at `http://localhost:8080/api/health`.
 

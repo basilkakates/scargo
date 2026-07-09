@@ -40,6 +40,7 @@ for a vehicle owner before deeper analytics or commercial data products expand.
   aggregate cohort inputs.
 - `docs/deployment-options.md` compares production database and app-hosting
   options.
+- `docs/deployment.md` is the production deployment and rollback runbook.
 - `docs/dashboard-creative-direction.md` defines the dashboard visual system.
 - `docs/monetization-strategy.md` captures longer-term product and revenue
   ideas.

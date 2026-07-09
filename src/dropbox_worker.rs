@@ -238,17 +238,19 @@ async fn apply_entry(
                     db,
                     connection,
                     file,
-                    Some(&vin),
-                    if result.duplicate {
-                        "duplicate"
-                    } else {
-                        "ingested"
+                    FileRecord {
+                        vin: Some(&vin),
+                        status: if result.duplicate {
+                            "duplicate"
+                        } else {
+                            "ingested"
+                        },
+                        rows_ingested: result.rows_ingested,
+                        duplicate: result.duplicate,
+                        upload_id: Some(result.upload_id),
+                        content_hash: Some(result.content_hash.as_str()),
+                        latest_error: None,
                     },
-                    result.rows_ingested,
-                    result.duplicate,
-                    Some(result.upload_id),
-                    Some(result.content_hash.as_str()),
-                    None,
                 )
                 .await
             }
@@ -257,13 +259,15 @@ async fn apply_entry(
                     db,
                     connection,
                     file,
-                    None,
-                    "skipped",
-                    0,
-                    false,
-                    None,
-                    file.content_hash.as_deref(),
-                    Some(error),
+                    FileRecord {
+                        vin: None,
+                        status: "skipped",
+                        rows_ingested: 0,
+                        duplicate: false,
+                        upload_id: None,
+                        content_hash: file.content_hash.as_deref(),
+                        latest_error: Some(error),
+                    },
                 )
                 .await
             }
@@ -392,17 +396,21 @@ async fn already_done(
     Ok(row.get(0))
 }
 
+struct FileRecord<'a> {
+    vin: Option<&'a str>,
+    status: &'a str,
+    rows_ingested: i64,
+    duplicate: bool,
+    upload_id: Option<Uuid>,
+    content_hash: Option<&'a str>,
+    latest_error: Option<&'a str>,
+}
+
 async fn record_file(
     db: &Database,
     connection: &Connection,
     file: &FileEntry,
-    vin: Option<&str>,
-    status: &str,
-    rows_ingested: i64,
-    duplicate: bool,
-    upload_id: Option<Uuid>,
-    content_hash: Option<&str>,
-    latest_error: Option<&str>,
+    record: FileRecord<'_>,
 ) -> Result<(), Error> {
     let client = db.get().await?;
     let id = Uuid::new_v4();
@@ -413,13 +421,13 @@ async fn record_file(
         &file.id,
         &file.path_lower,
         &file.rev,
-        &content_hash,
-        &vin,
-        &upload_id,
-        &status,
-        &rows_ingested,
-        &duplicate,
-        &latest_error,
+        &record.content_hash,
+        &record.vin,
+        &record.upload_id,
+        &record.status,
+        &record.rows_ingested,
+        &record.duplicate,
+        &record.latest_error,
     ];
     client
         .execute(
