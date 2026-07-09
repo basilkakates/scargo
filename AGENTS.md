@@ -22,8 +22,15 @@ scargo/
 ├── README.md           # Human-facing overview + setup
 ├── compose.yaml        # Local TimescaleDB/PostgreSQL service
 ├── docs/
+│   ├── dashboard-creative-direction.md # Dashboard visual system
+│   ├── deployment-options.md # Production database/app-hosting options
+│   ├── metric-policy.md # Metric categories, privacy, rollup/public policy
+│   ├── monetization-strategy.md # Product and revenue direction
 │   ├── privacy-model.md # Privacy, ownership, comparison, and cost scaling model
-│   └── metric-policy.md # Metric categories, privacy, rollup/public policy
+│   └── roadmap.md # Hosted-beta direction and active plan index
+├── .github/
+│   └── workflows/
+│       └── ci.yml # Rust CI checks
 ├── dashboard/
 │   └── static/
 │       ├── auth.html  # Dedicated login/create-account page for dashboard entry
@@ -66,7 +73,13 @@ scargo/
 │       └── vehicles.rs # GET  /api/vehicles — list account-owned vehicles
 ├── src/dropbox_worker.rs # Dropbox cursor poller + per-file download ingest worker
 ├── todo/
-│   ├── shared-link-ingest/ # Plan folder now tracks Dropbox OAuth incremental ingest
+│   ├── deployment-readiness/ # Active hosted-deploy plan set
+│   ├── docs-roadmap-refresh/ # Active docs organization plan
+│   ├── hosted-beta-onboarding/ # Active early-user onboarding plan
+│   ├── dropbox-ingest-operability/ # Active Dropbox beta operations plan
+│   ├── owner-health-report-v1/ # Active owner report plan
+│   ├── maintenance-inference-v1/ # Active maintenance inference plan
+│   ├── cohort-coverage-beta-access/ # Active contribution scoring/access plan
 │   └── completed/      # Completed plan folders after review and merge
 ├── scripts/
 │   ├── analyze-telemetry.py # One-time trend/relationship report (daily by default, raw opt-in)
@@ -113,6 +126,7 @@ revisions from the selected folder, and does not retain CSV or ZIP artifacts
 outside the database.
 Set `SCARGO_DROPBOX_REDIRECT_URI` only when the exact registered Dropbox
 callback URI differs from `SCARGO_BASE_URL + /api/dropbox/oauth/callback`.
+`SCARGO_DROPBOX_POLL_SEC` defaults to 300 seconds.
 
 ### Build & run
 ```bash
@@ -439,7 +453,7 @@ reason to roll them up or expose aggregate cohorts.
 | `SCARGO_BASE_URL` | unset | Public app base URL; default Dropbox callback = this value + `/api/dropbox/oauth/callback` |
 | `SCARGO_DROPBOX_REDIRECT_URI` | unset | Optional exact Dropbox callback override when the registered URI must use a different host or path |
 | `SCARGO_TOKEN_ENCRYPTION_KEY` | unset | 32-byte hex AES-GCM key for stored Dropbox refresh tokens |
-| `SCARGO_DROPBOX_POLL_SEC` | `3600` | Poll interval for active Dropbox connections |
+| `SCARGO_DROPBOX_POLL_SEC` | `300` | Poll interval for active Dropbox connections |
 | `POSTGRES_HOST` | `127.0.0.1` | Dev-mode local database host when URL is unset |
 | `POSTGRES_PORT` | `5432` | Dev-mode local database port when URL is unset |
 | `POSTGRES_USER` | `scargo` | Dev-mode local database user when URL is unset |

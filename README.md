@@ -70,7 +70,8 @@ Dropbox ingest uses Full Dropbox OAuth because OBD Fusion writes exports into
 its own Dropbox app folder. Scargo stores only an encrypted refresh token and a
 cursor, lists the selected Dropbox folder incrementally, downloads only unseen
 CSV revisions, streams those bytes into the existing ingest path, and does not
-retain CSV or ZIP artifacts outside the database.
+retain CSV or ZIP artifacts outside the database. The Dropbox poll interval
+defaults to `SCARGO_DROPBOX_POLL_SEC=300`.
 
 ## Features
 
@@ -85,6 +86,9 @@ retain CSV or ZIP artifacts outside the database.
 
 The dashboard visual system follows the Scargo creative direction documented in
 [docs/dashboard-creative-direction.md](docs/dashboard-creative-direction.md).
+
+The hosted-beta roadmap and active task plan index live in
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Tech Stack
 
@@ -333,6 +337,7 @@ rollup/public allowlist, and minimal-measurement policy.
 ## Project Layout
 
 ```
+docs/               # Roadmap, privacy, metric policy, deployment, product notes
 src/
 ├── main.rs          # Entry point
 ├── config/          # Settings, error types
@@ -341,6 +346,7 @@ src/
 └── api/             # HTTP handlers
 dashboard/
 └── static/          # Web dashboard (HTML + JS)
+todo/               # Active and completed claimable implementation plans
 ```
 
 See [AGENTS.md](AGENTS.md) for the full agent/developer context.
